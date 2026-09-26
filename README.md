@@ -30,15 +30,15 @@ npm start
 Crie um arquivo `.env` com base no `.env.example`:
 
 ```env
-TTK_TIKTOK_USERNAME=seu_username_da_live
+TIKTOK_USERNAME=quiz_azul
 PORT=3000
-SIMULATION_MODE=true
+SIMULATION_MODE=false
 ```
 
-- `TTK_TIKTOK_USERNAME`: username da sua live no TikTok.
+- `TIKTOK_USERNAME`: username da live do TikTok, configurado permanentemente como `quiz_azul`.
 - `PORT`: porta do servidor.
+- `SIMULATION_MODE=false`: tenta conectar com o TikTok LIVE real automaticamente.
 - `SIMULATION_MODE=true`: usa a simulação local.
-- `SIMULATION_MODE=false`: tenta conectar com o TikTok LIVE real.
 
 ## Modo simulação
 

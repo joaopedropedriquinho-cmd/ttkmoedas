@@ -209,7 +209,7 @@ function updateBalance() {
 
 function updateLiveStatus() {
   const isConnected = state.connected;
-  liveStatusTextEl.textContent = isConnected ? '● TIKTOK LIVE CONECTADA' : '● TIKTOK LIVE DESCONECTADA';
+  liveStatusTextEl.textContent = isConnected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE';
   liveStatusPillEl.classList.toggle('connected', isConnected);
   liveStatusPillEl.classList.toggle('offline', !isConnected);
 }

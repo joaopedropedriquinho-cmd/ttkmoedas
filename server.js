@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const dotenv = require('dotenv');
-const { TikTokLiveConnector } = require('tiktok-live-connector');
+const { WebcastPushConnection } = require('tiktok-live-connector');
 
 dotenv.config();
 
@@ -13,8 +13,8 @@ const io = new Server(server, {
 });
 
 const PORT = Number(process.env.PORT || 3000);
-const TTK_TIKTOK_USERNAME = process.env.TTK_TIKTOK_USERNAME || '';
-const SIMULATION_MODE = (process.env.SIMULATION_MODE || 'true').toLowerCase() === 'true';
+const TIKTOK_USERNAME = (process.env.TIKTOK_USERNAME || process.env.TTK_TIKTOK_USERNAME || 'quiz_azul').trim();
+const SIMULATION_MODE = (process.env.SIMULATION_MODE || 'false').toLowerCase() === 'true';
 
 const state = {
   connected: false,
@@ -24,10 +24,14 @@ const state = {
   balance: 8000000000,
   top10: [],
   usersByName: new Map(),
-  liveUsername: TTK_TIKTOK_USERNAME,
+  liveUsername: TIKTOK_USERNAME,
   rewardInProgress: false,
   lastEventAt: Date.now()
 };
+
+let reconnectTimer = null;
+let connectorInstance = null;
+const RECONNECT_MS = 15000;
 
 function formatNumber(value) {
   return new Intl.NumberFormat('pt-BR').format(value);
@@ -89,7 +93,7 @@ function emitState() {
     rewardQueue: state.rewardQueue,
     rewardHistory: state.rewardHistory,
     liveUsername: state.liveUsername,
-    status: state.connected ? '● TIKTOK LIVE CONECTADA' : '● TIKTOK LIVE DESCONECTADA'
+    status: state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE'
   });
 }
 
@@ -124,17 +128,16 @@ app.use(express.json());
 app.use(express.static(__dirname));
 
 app.get('/api/status', (_req, res) => {
-  res.json({ connected: state.connected, liveUsername: state.liveUsername, status: state.connected ? 'connected' : 'disconnected' });
+  res.json({ connected: state.connected, liveUsername: state.liveUsername, status: state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE' });
 });
 
 app.get('/api/config', (_req, res) => {
   res.json({ liveUsername: state.liveUsername, simulationMode: SIMULATION_MODE });
 });
 
-app.post('/api/connect', (req, res) => {
-  const username = (req.body && req.body.liveUsername) || TTK_TIKTOK_USERNAME;
-  state.liveUsername = username;
-  res.json({ ok: true, liveUsername: username, connected: state.connected });
+app.post('/api/connect', (_req, res) => {
+  state.liveUsername = TIKTOK_USERNAME;
+  res.json({ ok: true, liveUsername: state.liveUsername, connected: state.connected });
 });
 
 app.post('/api/disconnect', (_req, res) => {
@@ -196,26 +199,54 @@ function handleGift(user, gift) {
   emitState();
 }
 
+function scheduleReconnect() {
+  if (reconnectTimer || state.connected || SIMULATION_MODE || !TIKTOK_USERNAME) {
+    return;
+  }
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    initTikTokLiveConnector();
+  }, RECONNECT_MS);
+}
+
 function initTikTokLiveConnector() {
-  if (!TTK_TIKTOK_USERNAME) {
+  if (SIMULATION_MODE || !TIKTOK_USERNAME) {
     state.connected = false;
     emitState();
     return;
   }
 
-  const connector = new TikTokLiveConnector(TTK_TIKTOK_USERNAME);
+  if (connectorInstance) {
+    return;
+  }
+
+  const connector = new WebcastPushConnection(TIKTOK_USERNAME, {
+    processInitialData: false,
+    enableExtendedGiftInfo: true
+  });
+  connectorInstance = connector;
 
   connector.on('connected', () => {
     state.connected = true;
+    state.liveUsername = TIKTOK_USERNAME;
+    console.log(`LIVE CONECTADA: @${TIKTOK_USERNAME}`);
     emitState();
   });
 
   connector.on('disconnected', () => {
     state.connected = false;
+    connectorInstance = null;
+    console.log(`LIVE DESCONECTADA: @${TIKTOK_USERNAME}`);
     emitState();
+    scheduleReconnect();
   });
 
   connector.on('member', (data) => {
+    handleFollow(data);
+  });
+
+  connector.on('follow', (data) => {
     handleFollow(data);
   });
 
@@ -227,19 +258,24 @@ function initTikTokLiveConnector() {
 
   connector.on('live', () => {
     state.connected = true;
+    state.liveUsername = TIKTOK_USERNAME;
     emitState();
   });
 
   connector.on('error', (err) => {
-    console.error('TikTok Live error:', err);
+    console.warn(`TikTok Live offline/erro em @${TIKTOK_USERNAME}:`, err?.message || err);
     state.connected = false;
+    connectorInstance = null;
     emitState();
+    scheduleReconnect();
   });
 
   connector.connect().catch((error) => {
-    console.error('TikTok connect failed', error);
+    console.warn(`TikTok connect failed for @${TIKTOK_USERNAME}; aguardando nova tentativa:`, error?.message || error);
     state.connected = false;
+    connectorInstance = null;
     emitState();
+    scheduleReconnect();
   });
 }
 
@@ -276,11 +312,15 @@ io.on('connection', (socket) => {
     rewardQueue: state.rewardQueue,
     rewardHistory: state.rewardHistory,
     liveUsername: state.liveUsername,
-    status: state.connected ? '● TIKTOK LIVE CONECTADA' : '● TIKTOK LIVE DESCONECTADA'
+    status: state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE'
   });
 });
 
 server.listen(PORT, () => {
   console.log(`Servidor rodando em http://localhost:${PORT}`);
+  console.log(`TIKTOK_USERNAME=${TIKTOK_USERNAME}`);
+  if (!SIMULATION_MODE) {
+    initTikTokLiveConnector();
+  }
   emitState();
 });
