@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LIVE REWARDS</title>
+    <meta
+      name="description"
+      content="Simulação de live rewards com ranking de seguidores e premiação de rosas."
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="top10-panel" aria-label="Ranking dos 10 melhores seguidores">
+        <div class="top10-title">🏆 TOP 10</div>
+        <ol id="top10List" class="top10-list"></ol>
+      </aside>
+
+      <header class="topbar">
+        <div class="brand-group">
+          <div class="brand-title">LIVE REWARDS</div>
+          <div class="status-pill" id="liveStatusPill">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="liveStatusText">AO VIVO</span>
+          </div>
+        </div>
+
+        <div class="balance-wrap" aria-label="Saldo em moedas">
+          <div class="balance-row">
+            <span class="coin-icon" aria-hidden="true">🪙</span>
+            <span id="balanceValue">8.000.000.000</span>
+          </div>
+          <div class="balance-unit">Moedas</div>
+        </div>
+      </header>
+
+      <main class="live-layout">
+        <section class="viewer-card" aria-live="polite">
+          <div class="card-shell">
+            <div class="card-header">
+              <span class="mini-pill">LIVE</span>
+              <span class="hint-text">🌹 3 rosas para recompensa</span>
+            </div>
+
+            <div class="display-username">
+              <span class="at-sign">@</span>
+              <span class="typed-name" id="typedName"></span>
+              <span class="cursor" aria-hidden="true"></span>
+            </div>
+
+            <div class="rose-area">
+              <div class="rose-meter" id="roseMeter">
+                <span class="rose-icon">🌹</span>
+                <span class="rose-number" id="roseNumber">0</span>
+                <span class="counter-divider">/ 3</span>
+              </div>
+              <div class="rose-status" id="roseStatus">🌹 3 ROSAS</div>
+            </div>
+
+            <div class="winner-badge" id="winnerBadge">🏆 1º LUGAR</div>
+
+            <div class="profile-card hidden" id="profileCard">
+              <div class="profile-avatar-wrap">
+                <img id="profileAvatar" alt="Avatar do usuário" />
+              </div>
+              <div class="profile-info">
+                <div class="profile-username" id="profileUsername">@nome</div>
+                <div class="profile-roses" id="profileRoses">🌹 3 ROSAS</div>
+              </div>
+            </div>
+
+            <div class="action-area">
+              <button class="primary-button hidden" id="confirmButton" type="button">
+                CONFIRMAR
+              </button>
+              <button class="primary-button reward-button hidden" id="rewardButton" type="button">
+                PREMIAR
+              </button>
+            </div>
+
+            <div class="reward-display hidden" id="rewardDisplay">
+              <div class="reward-amount" id="rewardAmount">+5.000</div>
+              <div class="reward-caption">🪙 5.000 moedas</div>
+            </div>
+
+            <div class="final-award hidden" id="finalAward">
+              <div class="final-avatar-wrap">
+                <img id="finalAvatar" alt="Avatar do usuário premiado" />
+              </div>
+              <div class="final-name" id="finalName">@nome</div>
+              <div class="final-trophy">🏆</div>
+              <div class="final-status">PREMIADO</div>
+              <div class="final-amount">🪙 +5.000 moedas</div>
+            </div>
+
+            <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
+          </div>
+        </section>
+
+        <aside class="reward-panel">
+          <div class="panel-header">PREMIAÇÃO</div>
+          <ul id="rewardHistory" class="reward-list"></ul>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "ttkmoedas",
+  "version": "1.0.0",
+  "description": "Sistema de ranking e recompensas para TikTok LIVE",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "tiktok-live-connector": "^1.0.0"
+  }
+}
