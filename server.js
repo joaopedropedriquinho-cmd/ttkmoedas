@@ -37,19 +37,36 @@ function formatNumber(value) {
   return new Intl.NumberFormat('pt-BR').format(value);
 }
 
+function sanitizeUsername(value) {
+  const cleanName = String(value || '').trim().replace(/^@/, '');
+  const lowerName = cleanName.toLowerCase();
+
+  if (!cleanName || lowerName === 'usuario' || lowerName === 'user' || lowerName === 'nome' || lowerName === 'seguindo...' || lowerName.includes('seguindo')) {
+    return null;
+  }
+
+  return cleanName;
+}
+
 function toPublicUser(user) {
+  const username = sanitizeUsername(user?.username || user?.name);
+
+  if (!username) {
+    return null;
+  }
+
   return {
-    username: user.username || user.name || 'usuario',
-    nickname: user.nickname || user.username || user.name || 'usuario',
-    avatar: user.avatar || user.profilePicture || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.username || user.name || 'user')}`,
+    username,
+    nickname: sanitizeUsername(user?.nickname || user?.username || user?.name) || username,
+    avatar: user.avatar || user.profilePicture || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`,
     roses: user.roses || 0,
     position: user.position || 0,
-    id: user.id || user.username || user.name || `user-${Math.random().toString(36).slice(2, 10)}`
+    id: user.id || username
   };
 }
 
 function ensureUser(username, extra = {}) {
-  const cleanName = (username || '').trim();
+  const cleanName = sanitizeUsername(username);
   if (!cleanName) return null;
 
   const existing = state.usersByName.get(cleanName.toLowerCase());
@@ -60,7 +77,7 @@ function ensureUser(username, extra = {}) {
   const user = {
     id: extra.id || `user-${cleanName.toLowerCase()}`,
     username: cleanName,
-    nickname: extra.nickname || cleanName,
+    nickname: sanitizeUsername(extra.nickname || cleanName) || cleanName,
     avatar: extra.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(cleanName)}`,
     roses: 0,
     position: 0,
@@ -74,7 +91,7 @@ function ensureUser(username, extra = {}) {
 
 function getSortedRanking() {
   const entries = state.followers
-    .filter((user) => user.roses < 3)
+    .filter((user) => user && sanitizeUsername(user.username) && user.roses < 3)
     .sort((a, b) => b.roses - a.roses || (a.position || 0) - (b.position || 0) || a.username.localeCompare(b.username));
 
   entries.forEach((user, index) => {
@@ -161,6 +178,10 @@ app.get('/api/event-stream', (_req, res) => {
 
 function handleFollow(user) {
   const normalized = toPublicUser(user);
+  if (!normalized) {
+    return;
+  }
+
   const follower = ensureUser(normalized.username, {
     nickname: normalized.nickname,
     avatar: normalized.avatar
@@ -174,12 +195,24 @@ function handleFollow(user) {
 }
 
 function handleGift(user, gift) {
-  const username = (user && (user.username || user.nickname)) || gift?.user?.username || 'usuario';
+  const username = sanitizeUsername((user && (user.username || user.nickname)) || gift?.user?.username || gift?.user?.nickname);
+  if (!username) {
+    return;
+  }
+
   const profile = toPublicUser({ ...user, username, nickname: user?.nickname || user?.username || username, avatar: user?.avatar || user?.profilePicture || gift?.user?.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}` });
+  if (!profile) {
+    return;
+  }
+
   const follower = ensureUser(profile.username, {
     nickname: profile.nickname,
     avatar: profile.avatar
   });
+
+  if (!follower) {
+    return;
+  }
 
   const giftName = (gift && gift.giftName) || (gift && gift.name) || 'ROSA';
   if (giftName && giftName.toLowerCase().includes('rosa')) {
@@ -279,30 +312,34 @@ function initTikTokLiveConnector() {
   });
 }
 
-if (SIMULATION_MODE) {
-  setInterval(() => {
-    const names = ['Joao123', 'PedroBR', 'AnaLive', 'GamerBR', 'LucasFPS', 'LuanGames', 'MariaLive', 'Player2026'];
-    const name = names[Math.floor(Math.random() * names.length)];
-    const user = ensureUser(name, {
-      nickname: name,
-      avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`
-    });
+function runSimulationTest() {
+  if (!SIMULATION_MODE) {
+    return;
+  }
 
-    if (user) {
-      user.roses = Math.min(3, (user.roses || 0) + 1);
-      if (user.roses >= 3) {
-        user.roses = 3;
-        queueReward(user);
-      }
+  const names = ['test_user_01', 'test_user_02', 'test_user_03'];
+  const name = names[Math.floor(Math.random() * names.length)];
+  const user = ensureUser(name, {
+    nickname: name,
+    avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`
+  });
+
+  if (user) {
+    user.roses = Math.min(3, (user.roses || 0) + 1);
+    if (user.roses >= 3) {
+      user.roses = 3;
+      queueReward(user);
     }
+  }
 
-    emitState();
-  }, 3000);
+  emitState();
 }
 
 if (!SIMULATION_MODE) {
   initTikTokLiveConnector();
 }
+
+globalThis.runSimulationTest = runSimulationTest;
 
 io.on('connection', (socket) => {
   socket.emit('state:update', {

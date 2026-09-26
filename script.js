@@ -1,26 +1,3 @@
-const BASE_FOLLOWERS = [
-  'Joao123',
-  'gatun0010203',
-  'Builderman',
-  'Player_Roblox',
-  'LuanGames',
-  'PedroFPS',
-  'MariaLive',
-  'LucasBR',
-  'AnaRoblox',
-  'Gamer_2026',
-  'RobloxPlayer',
-  'PedroBR',
-  'LucasFPS',
-  'Player2026',
-  'GamerBR',
-  'RafaLive',
-  'NinjaZone',
-  'MayaraPlay',
-  'KikoRush',
-  'RinTecs'
-];
-
 const REWARD_AMOUNT = 5000;
 const INITIAL_BALANCE = 8000000000;
 const MAX_TOP = 10;
@@ -69,10 +46,26 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizeFollowerName(name) {
+  const value = String(name || '').trim().replace(/^@/, '').toLowerCase();
+
+  if (!value || value === 'usuario' || value === 'user' || value === 'nome' || value === 'seguindo...' || value.includes('seguindo')) {
+    return null;
+  }
+
+  return value;
+}
+
 function createFollower(name, roses = 0) {
+  const normalizedName = normalizeFollowerName(name);
+
+  if (!normalizedName) {
+    return null;
+  }
+
   return {
     id: state.nextId++,
-    name,
+    name: normalizedName,
     roses
   };
 }
@@ -130,20 +123,22 @@ function lookupProfile(username) {
   };
 }
 
-function seedFollowers() {
-  BASE_FOLLOWERS.forEach((name, index) => {
-    const baseRoses = index % 4 === 0 ? 1 : index % 3 === 0 ? 2 : 0;
+function seedTestFollowers() {
+  const testNames = [
+    'test_user_01',
+    'test_user_02',
+    'test_user_03'
+  ];
+
+  testNames.forEach((name, index) => {
+    const baseRoses = index % 2 === 0 ? 1 : 0;
     state.followers.push(createFollower(name, baseRoses));
   });
-
-  const extraCount = 6;
-  for (let i = 0; i < extraCount; i += 1) {
-    state.followers.push(createFollower(generateFollowerName(), Math.random() > 0.6 ? 1 : 0));
-  }
 }
 
 function getSortedRanking() {
   return [...state.followers]
+    .filter((follower) => follower && follower.name && !!normalizeFollowerName(follower.name))
     .filter((follower) => follower.roses < 3)
     .sort((a, b) => b.roses - a.roses || a.name.localeCompare(b.name));
 }
@@ -151,6 +146,10 @@ function getSortedRanking() {
 function renderTop10() {
   const ranking = getSortedRanking().slice(0, MAX_TOP);
   top10ListEl.innerHTML = '';
+
+  if (!ranking.length) {
+    return;
+  }
 
   ranking.forEach((follower, index) => {
     const item = document.createElement('li');
@@ -162,17 +161,6 @@ function renderTop10() {
     `;
     top10ListEl.appendChild(item);
   });
-
-  while (top10ListEl.children.length < MAX_TOP) {
-    const filler = document.createElement('li');
-    filler.className = 'top10-item';
-    filler.innerHTML = `
-      <span class="position">${top10ListEl.children.length + 1}.</span>
-      <span class="user">@seguindo...</span>
-      <span class="rose-count">🌹 0</span>
-    `;
-    top10ListEl.appendChild(filler);
-  }
 }
 
 function renderRewardHistory() {
@@ -440,16 +428,27 @@ function applyStateFromServer(payload = {}) {
   const rewardHistory = Array.isArray(payload.rewardHistory) ? payload.rewardHistory : [];
 
   state.balance = Number(payload.balance || state.balance);
-  state.followers = ranking.map((user, index) => ({
-    id: user.id || `${user.username || 'user'}-${index}`,
-    name: user.username || user.name || 'usuario',
-    username: user.username || user.name || 'usuario',
-    roses: Number(user.roses || 0),
-    position: index + 1,
-    avatar: user.avatar || generateAvatarDataUri(user.username || user.name || 'user')
-  }));
-  state.rewardQueue = rewardQueue;
-  state.rewardHistory = rewardHistory;
+  state.followers = ranking
+    .map((user, index) => {
+      const rawName = user?.username || user?.name || '';
+      const normalizedName = normalizeFollowerName(rawName);
+
+      if (!normalizedName) {
+        return null;
+      }
+
+      return {
+        id: user.id || `${normalizedName}-${index}`,
+        name: normalizedName,
+        username: normalizedName,
+        roses: Number(user.roses || 0),
+        position: index + 1,
+        avatar: user.avatar || generateAvatarDataUri(normalizedName)
+      };
+    })
+    .filter(Boolean);
+  state.rewardQueue = rewardQueue.filter((user) => user && normalizeFollowerName(user.username || user.name));
+  state.rewardHistory = rewardHistory.filter((user) => user && normalizeFollowerName(user.username || user.name));
   state.connected = Boolean(payload.connected);
   state.mode = payload.liveUsername ? 'tiktok' : 'simulation';
 
@@ -474,23 +473,46 @@ function initializeSocket() {
   });
 }
 
+function runManualTestSeed() {
+  state.followers = [];
+  state.rewardQueue = [];
+  state.rewardHistory = [];
+  seedTestFollowers();
+  renderTop10();
+  renderRewardHistory();
+}
+
 function initialize() {
   state.followers = [];
   state.rewardQueue = [];
   state.rewardHistory = [];
   state.balance = INITIAL_BALANCE;
 
-  seedFollowers();
   updateBalance();
   renderTop10();
   renderRewardHistory();
   resetPrizeStage();
   updateLiveStatus();
   initializeSocket();
-
-  if (!socket) {
-    setInterval(simulateLiveEvent, 1800);
-  }
 }
+
+window.runManualTestSeed = runManualTestSeed;
+window.startManualSimulation = function startManualSimulation() {
+  if (window.manualSimulationInterval) {
+    clearInterval(window.manualSimulationInterval);
+  }
+
+  window.manualSimulationInterval = setInterval(() => {
+    if (!state.connected) {
+      return;
+    }
+
+    if (state.followers.length === 0) {
+      return;
+    }
+
+    simulateLiveEvent();
+  }, 1800);
+};
 
 initialize();
