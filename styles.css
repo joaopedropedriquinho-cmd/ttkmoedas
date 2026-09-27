@@ -154,6 +154,38 @@ ul {
   text-transform: uppercase;
 }
 
+.status-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.connect-live-button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(31, 95, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(31, 95, 255, 0.08);
+  color: var(--blue-strong);
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 8px 16px rgba(31, 95, 255, 0.08);
+}
+
+.connect-live-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 18px rgba(31, 95, 255, 0.12);
+}
+
+.connect-live-button:active {
+  transform: scale(0.96);
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;

@@ -23,6 +23,7 @@ const confettiLayerEl = document.getElementById('confettiLayer');
 const finalAwardEl = document.getElementById('finalAward');
 const finalNameEl = document.getElementById('finalName');
 const finalAvatarEl = document.getElementById('finalAvatar');
+const connectLiveButtonEl = document.getElementById('connectLiveButton');
 
 const socket = window.io ? window.io() : null;
 
@@ -35,7 +36,9 @@ const state = {
   processingReward: false,
   nextId: 1,
   connected: false,
-  mode: 'simulation'
+  mode: 'simulation',
+  status: '○ AGUARDANDO LIVE',
+  connectInProgress: false
 };
 
 function formatNumber(value) {
@@ -196,10 +199,10 @@ function updateBalance() {
 }
 
 function updateLiveStatus() {
-  const isConnected = state.connected;
-  liveStatusTextEl.textContent = isConnected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE';
-  liveStatusPillEl.classList.toggle('connected', isConnected);
-  liveStatusPillEl.classList.toggle('offline', !isConnected);
+  const statusText = state.status || (state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE');
+  liveStatusTextEl.textContent = statusText;
+  liveStatusPillEl.classList.toggle('connected', statusText === '● LIVE CONECTADA');
+  liveStatusPillEl.classList.toggle('offline', statusText !== '● LIVE CONECTADA');
 }
 
 function createConfettiBurst() {
@@ -450,6 +453,7 @@ function applyStateFromServer(payload = {}) {
   state.rewardQueue = rewardQueue.filter((user) => user && normalizeFollowerName(user.username || user.name));
   state.rewardHistory = rewardHistory.filter((user) => user && normalizeFollowerName(user.username || user.name));
   state.connected = Boolean(payload.connected);
+  state.status = payload.status || (state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE');
   state.mode = payload.liveUsername ? 'tiktok' : 'simulation';
 
   updateBalance();
@@ -482,11 +486,43 @@ function runManualTestSeed() {
   renderRewardHistory();
 }
 
+async function requestTikTokConnect() {
+  if (state.connectInProgress) {
+    return;
+  }
+
+  state.connectInProgress = true;
+  state.status = '⟳ CONECTANDO...';
+  updateLiveStatus();
+
+  try {
+    const response = await fetch('/api/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const data = await response.json();
+    if (!response.ok || !data || !data.ok) {
+      throw new Error(data && data.error ? data.error : 'Conexão falhou');
+    }
+
+    console.log('[FRONTEND] Tentativa de conexão TikTok enviada para @quiz_azul');
+  } catch (error) {
+    console.error('[FRONTEND] CONEXÃO FALHOU', error);
+    state.connected = false;
+    state.status = '× CONEXÃO FALHOU';
+    updateLiveStatus();
+  } finally {
+    state.connectInProgress = false;
+  }
+}
+
 function initialize() {
   state.followers = [];
   state.rewardQueue = [];
   state.rewardHistory = [];
   state.balance = INITIAL_BALANCE;
+  state.status = '○ AGUARDANDO LIVE';
 
   updateBalance();
   renderTop10();
@@ -494,6 +530,10 @@ function initialize() {
   resetPrizeStage();
   updateLiveStatus();
   initializeSocket();
+
+  if (connectLiveButtonEl) {
+    connectLiveButtonEl.addEventListener('click', requestTikTokConnect);
+  }
 }
 
 window.runManualTestSeed = runManualTestSeed;
