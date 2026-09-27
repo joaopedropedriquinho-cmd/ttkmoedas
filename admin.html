@@ -3,99 +3,140 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Administração manual de jogadores e moedas do LIVE REWARDS." />
-    <title>Painel de Moedas | LIVE REWARDS</title>
+    <meta name="description" content="Consulta de perfis públicos e registro de premiações do LIVE REWARDS." />
+    <title>Painel de Premiação | LIVE REWARDS</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="app-shell admin-shell">
       <header class="topbar">
         <div class="brand-group">
-          <div class="brand-title">PAINEL DE MOEDAS</div>
+          <div class="brand-title">PAINEL DE PREMIAÇÃO</div>
           <div class="status-row">
             <div class="status-pill manual-pill">
               <span class="status-dot" aria-hidden="true"></span>
-              <span>ADMINISTRAÇÃO MANUAL</span>
+              <span>REGISTRO INTERNO</span>
             </div>
           </div>
         </div>
-        <a class="public-link" href="/">VER RANKING <span aria-hidden="true">↗</span></a>
+        <a class="public-link" href="/admin/players">JOGADORES <span aria-hidden="true">↗</span></a>
       </header>
 
-      <main class="admin-main">
-        <section class="admin-section add-section" aria-labelledby="addTitle">
+      <main class="prize-main">
+        <section class="prize-composer" aria-labelledby="prizeTitle">
           <div class="section-heading">
             <div>
-              <span class="section-kicker">NOVO REGISTRO</span>
-              <h1 id="addTitle">Adicionar jogador</h1>
+              <span class="section-kicker">NOVA PREMIAÇÃO</span>
+              <h1 id="prizeTitle">Encontrar usuário do TikTok</h1>
             </div>
+            <span class="prize-gift" aria-hidden="true">🎁</span>
           </div>
-          <form id="playerForm" class="player-form">
-            <label class="field">
-              <span>Nome do jogador</span>
-              <input id="playerName" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Ex.: JoaoPedro" required />
-            </label>
-            <label class="field">
-              <span>Quantidade de moedas</span>
-              <input id="playerCoins" name="coins" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="1500" required />
-            </label>
-            <button class="primary-button add-player-button" type="submit">+ ADICIONAR JOGADOR</button>
-          </form>
-          <p id="adminMessage" class="admin-message" role="status" aria-live="polite"></p>
+
+          <div class="prize-workspace">
+            <section class="recipient-panel" aria-label="Busca do perfil">
+              <form id="profileSearchForm" class="profile-search-form">
+                <label class="field" for="tiktokUsername">
+                  <span>Nickname do TikTok</span>
+                  <span class="profile-search-input">
+                    <span aria-hidden="true">@</span>
+                    <input id="tiktokUsername" type="text" maxlength="24" autocomplete="off" placeholder="usuario123" required />
+                  </span>
+                </label>
+                <button id="profileSearchButton" class="secondary-button search-profile-button" type="submit">BUSCAR</button>
+              </form>
+              <p id="profileMessage" class="profile-message" role="status" aria-live="polite">Digite um nickname para consultar o perfil público.</p>
+
+              <div id="profilePreview" class="prize-profile hidden" aria-live="polite">
+                <img id="profileAvatar" class="prize-avatar hidden" alt="Foto de perfil do TikTok" />
+                <div id="profilePhotoMissing" class="prize-avatar-missing hidden">FOTO INDISPONÍVEL</div>
+                <div class="prize-profile-info">
+                  <span id="profileDisplayName" class="profile-display-name"></span>
+                  <strong id="profileUsername" class="profile-username-label"></strong>
+                  <span id="profileVerification" class="profile-verification"></span>
+                  <a id="profileExternalLink" class="profile-external-link hidden" target="_blank" rel="noopener noreferrer">ABRIR NO TIKTOK ↗</a>
+                </div>
+              </div>
+
+              <label id="manualVerificationWrap" class="manual-verification hidden">
+                <input id="manualVerification" type="checkbox" />
+                <span>Conferi o perfil no TikTok e autorizo registrar sem confirmação/foto automática.</span>
+              </label>
+            </section>
+
+            <form id="awardForm" class="award-form">
+              <label class="field" for="awardCoins">
+                <span>Quantidade do prêmio</span>
+                <span class="coin-input-wrap">
+                  <span aria-hidden="true">🪙</span>
+                  <input id="awardCoins" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" placeholder="1.000" required />
+                  <span>MOEDAS</span>
+                </span>
+              </label>
+              <button id="awardButton" class="primary-button award-button" type="submit" disabled>🎁 DAR PRÊMIO</button>
+              <p class="award-disclaimer">O prêmio será registrado neste painel. A entrega de moedas não é automatizada pelo TikTok.</p>
+            </form>
+          </div>
+
+          <section id="successPanel" class="prize-success hidden" aria-live="polite">
+            <div class="success-heading">
+              <span class="success-check" aria-hidden="true">✓</span>
+              <div>
+                <span class="section-kicker">REGISTRO CONCLUÍDO</span>
+                <h2>PRESENTE ENVIADO</h2>
+              </div>
+            </div>
+            <div class="success-recipient">
+              <img id="successAvatar" class="prize-avatar hidden" alt="Foto de perfil do TikTok" />
+              <div id="successPhotoMissing" class="prize-avatar-missing hidden">FOTO INDISPONÍVEL</div>
+              <div>
+                <strong id="successUsername"></strong>
+                <span id="successCoins"></span>
+              </div>
+            </div>
+            <p id="successSummary" class="success-summary"></p>
+            <p class="success-disclaimer">Premiação registrada no sistema; não houve entrega automática de moedas pelo TikTok.</p>
+          </section>
         </section>
 
-        <section class="admin-section players-section" aria-labelledby="playersTitle">
-          <div class="section-heading players-heading">
+        <section class="reward-history-section" aria-labelledby="historyTitle">
+          <div class="section-heading history-heading">
             <div>
-              <span class="section-kicker">CONTROLE DE SALDOS</span>
-              <h2 id="playersTitle">Jogadores</h2>
+              <span class="section-kicker">PREMIAÇÕES REGISTRADAS</span>
+              <h2 id="historyTitle">Histórico</h2>
             </div>
-            <span id="playerCount" class="ranking-count">0 JOGADORES</span>
+            <span id="rewardCount" class="ranking-count">0 PRÊMIOS</span>
           </div>
-          <div id="adminPlayerList" class="admin-player-list" aria-live="polite"></div>
+          <label class="history-search">
+            <span aria-hidden="true">⌕</span>
+            <input id="rewardSearch" type="search" maxlength="40" placeholder="Pesquisar por nickname" autocomplete="off" />
+          </label>
+          <div id="rewardHistory" class="reward-history-list" aria-live="polite"></div>
         </section>
       </main>
       <a class="admin-link" href="/">VOLTAR AO RANKING <span aria-hidden="true">↗</span></a>
     </div>
 
-    <dialog id="playerDialog" class="admin-dialog">
-      <form id="playerDialogForm" class="dialog-form">
-        <span class="section-kicker">DADOS DO JOGADOR</span>
-        <h2>Editar jogador</h2>
-        <input id="editPlayerId" type="hidden" />
-        <label class="field">
-          <span>Nome do jogador</span>
-          <input id="editPlayerName" type="text" maxlength="40" required />
-        </label>
-        <label class="field">
-          <span>Quantidade de moedas</span>
-          <input id="editPlayerCoins" type="number" min="0" max="9007199254740991" step="1" required />
-        </label>
-        <div class="dialog-actions">
-          <button class="secondary-button" type="button" data-close-dialog>CANCELAR</button>
-          <button class="primary-button" type="submit">SALVAR ALTERAÇÕES</button>
+    <dialog id="confirmRewardDialog" class="admin-dialog reward-confirm-dialog">
+      <form id="confirmRewardForm" class="dialog-form">
+        <span class="section-kicker">CONFIRMAÇÃO</span>
+        <h2>Confirmar premiação?</h2>
+        <div class="confirm-recipient">
+          <img id="confirmAvatar" class="prize-avatar hidden" alt="" />
+          <div id="confirmPhotoMissing" class="prize-avatar-missing hidden">FOTO INDISPONÍVEL</div>
+          <div>
+            <strong id="confirmUsername"></strong>
+            <span id="confirmCoins"></span>
+          </div>
         </div>
-      </form>
-    </dialog>
-
-    <dialog id="coinDialog" class="admin-dialog">
-      <form id="coinDialogForm" class="dialog-form">
-        <span class="section-kicker">AJUSTE DE SALDO</span>
-        <h2 id="coinDialogTitle">Adicionar moedas</h2>
-        <p id="coinDialogPlayer" class="dialog-player-name"></p>
-        <input id="coinPlayerId" type="hidden" />
-        <label class="field">
-          <span>Quantidade de moedas</span>
-          <input id="coinAmount" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" placeholder="500" required />
-        </label>
+        <p id="confirmVerificationNote" class="award-disclaimer"></p>
         <div class="dialog-actions">
-          <button class="secondary-button" type="button" data-close-dialog>CANCELAR</button>
-          <button class="primary-button" type="submit">CONFIRMAR AJUSTE</button>
+          <button id="cancelRewardButton" class="secondary-button" type="button">CANCELAR</button>
+          <button id="confirmRewardButton" class="primary-button" type="submit">CONFIRMAR PRÊMIO</button>
         </div>
       </form>
     </dialog>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="admin.js"></script>
+    <script src="prizes.js"></script>
   </body>
 </html>

@@ -18,6 +18,7 @@ const io = new Server(server, {
 });
 
 const PORT = Number(process.env.PORT || 3000);
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 
 const TIKTOK_USERNAME = (
   process.env.TIKTOK_USERNAME ||
@@ -26,7 +27,8 @@ const TIKTOK_USERNAME = (
 ).trim();
 
 const SIMULATION_MODE = true;
-const PLAYERS_FILE = process.env.PLAYERS_FILE || path.join(__dirname, "data", "players.json");
+const PLAYERS_FILE = process.env.PLAYERS_FILE || path.join(DATA_DIR, "players.json");
+const REWARDS_FILE = process.env.REWARDS_FILE || path.join(DATA_DIR, "rewards.json");
 
 const RECONNECT_MS = 15000;
 
@@ -62,6 +64,8 @@ let connectorInstance = null;
 let reconnectTimer = null;
 let tiktokApi = null;
 let players = loadPlayers();
+let rewards = loadRewards();
+const profileCache = new Map();
 
 
 // ============================================================
@@ -151,6 +155,188 @@ function loadPlayers() {
   }
 
   return storedPlayers;
+}
+
+
+function loadRewards() {
+  fs.mkdirSync(path.dirname(REWARDS_FILE), { recursive: true });
+
+  if (!fs.existsSync(REWARDS_FILE)) {
+    fs.writeFileSync(REWARDS_FILE, "[]\n", "utf8");
+  }
+
+  const storedRewards = JSON.parse(fs.readFileSync(REWARDS_FILE, "utf8"));
+
+  if (!Array.isArray(storedRewards)) {
+    throw new Error("O arquivo de premiações precisa conter uma lista JSON.");
+  }
+
+  return storedRewards;
+}
+
+
+function saveRewards(nextRewards) {
+  const temporaryFile = REWARDS_FILE + ".tmp";
+  fs.writeFileSync(temporaryFile, JSON.stringify(nextRewards, null, 2) + "\n", "utf8");
+  fs.renameSync(temporaryFile, REWARDS_FILE);
+  rewards = nextRewards;
+  io.emit("rewards:update");
+}
+
+
+function validateTikTokUsername(value) {
+  const username = String(value || "").trim().replace(/^@/, "");
+
+  if (!/^[a-zA-Z0-9._]{2,24}$/.test(username)) {
+    return null;
+  }
+
+  return username;
+}
+
+
+function parseProfileFromPage(html, requestedUsername) {
+  const scripts = [
+    html.match(/<script[^>]+id=["']__UNIVERSAL_DATA_FOR_REHYDRATION__["'][^>]*>([\s\S]*?)<\/script>/i),
+    html.match(/<script[^>]+id=["']SIGI_STATE["'][^>]*>([\s\S]*?)<\/script>/i)
+  ].filter(Boolean);
+
+  for (const match of scripts) {
+    try {
+      const pending = [JSON.parse(match[1])];
+      let inspected = 0;
+
+      while (pending.length && inspected < 50000) {
+        const value = pending.pop();
+        inspected += 1;
+
+        if (!value || typeof value !== "object") continue;
+
+        const uniqueId = value.uniqueId || value.unique_id;
+        const avatarUrl = value.avatarLarger || value.avatarMedium || value.avatarThumb || value.avatar_url;
+
+        if (
+          typeof uniqueId === "string" &&
+          uniqueId.toLowerCase() === requestedUsername.toLowerCase() &&
+          typeof avatarUrl === "string" &&
+          avatarUrl.startsWith("https://")
+        ) {
+          return {
+            username: uniqueId,
+            displayName: String(value.nickname || value.display_name || uniqueId),
+            avatarUrl,
+            verified: Boolean(value.verified || value.is_verified),
+            profileVerified: true
+          };
+        }
+
+        for (const item of Object.values(value)) {
+          if (item && typeof item === "object") pending.push(item);
+        }
+      }
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  const meta = {};
+  const tags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of tags) {
+    const attributes = {};
+    const attributePattern = /([\w:-]+)=["']([^"']*)["']/g;
+    let attribute;
+    while ((attribute = attributePattern.exec(tag))) {
+      attributes[attribute[1].toLowerCase()] = attribute[2];
+    }
+    if (attributes.property) meta[attributes.property.toLowerCase()] = attributes.content || "";
+  }
+
+  const pageUrl = meta["og:url"] || "";
+  const pageTitle = meta["og:title"] || "";
+  const avatarUrl = meta["og:image"] || "";
+  const pageUsername = pageUrl.match(/@([a-zA-Z0-9._]+)/)?.[1];
+
+  if (
+    pageUsername &&
+    pageUsername.toLowerCase() === requestedUsername.toLowerCase() &&
+    avatarUrl.startsWith("https://")
+  ) {
+    const displayName = pageTitle.split("(@")[0].replace(/\s*\|\s*TikTok\s*$/i, "").trim();
+    return {
+      username: pageUsername,
+      displayName: displayName || pageUsername,
+      avatarUrl,
+      verified: false,
+      profileVerified: true
+    };
+  }
+
+  return null;
+}
+
+
+async function fetchTikTokProfile(username) {
+  const cacheKey = username.toLowerCase();
+  const cached = profileCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.profile;
+
+  let response;
+  try {
+    response = await fetch(`https://www.tiktok.com/@${encodeURIComponent(username)}`, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        Accept: "text/html,application/xhtml+xml"
+      },
+      signal: AbortSignal.timeout(12000)
+    });
+  } catch (error) {
+    const unavailable = new Error(error.name === "TimeoutError" ? "A busca no TikTok excedeu o tempo limite." : "Não foi possível consultar o TikTok agora.");
+    unavailable.status = error.name === "TimeoutError" ? 504 : 502;
+    unavailable.code = "TIKTOK_UNAVAILABLE";
+    throw unavailable;
+  }
+
+  if (response.status === 404) {
+    const notFound = new Error("Usuário do TikTok não encontrado.");
+    notFound.status = 404;
+    notFound.code = "TIKTOK_USER_NOT_FOUND";
+    throw notFound;
+  }
+
+  if (!response.ok) {
+    const unavailable = new Error("O TikTok recusou a consulta do perfil.");
+    unavailable.status = 502;
+    unavailable.code = "TIKTOK_UNAVAILABLE";
+    throw unavailable;
+  }
+
+  const html = await response.text();
+  if (html.length > 5_000_000) {
+    const unavailable = new Error("A resposta do TikTok excedeu o tamanho permitido.");
+    unavailable.status = 502;
+    unavailable.code = "TIKTOK_UNAVAILABLE";
+    throw unavailable;
+  }
+
+  if (/Please wait\.\.\.|slardarWAF|_wafchallengeid|waforiginalreid/i.test(html)) {
+    const blocked = new Error("O TikTok bloqueou a busca automatizada neste momento.");
+    blocked.status = 503;
+    blocked.code = "TIKTOK_BLOCKED";
+    throw blocked;
+  }
+
+  const profile = parseProfileFromPage(html, username);
+  if (!profile) {
+    const missingProfile = /user not found|couldn.t find this account|account doesn.t exist/i.test(html);
+    const error = new Error(missingProfile ? "Usuário do TikTok não encontrado." : "O TikTok não forneceu os dados públicos deste perfil.");
+    error.status = missingProfile ? 404 : 503;
+    error.code = missingProfile ? "TIKTOK_USER_NOT_FOUND" : "TIKTOK_PROFILE_UNAVAILABLE";
+    throw error;
+  }
+
+  profileCache.set(cacheKey, { profile, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return profile;
 }
 
 
@@ -1033,6 +1219,104 @@ app.use(
 
 app.get("/admin", function (_req, res) {
   res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+
+app.get("/admin/players", function (_req, res) {
+  res.sendFile(path.join(__dirname, "players.html"));
+});
+
+
+app.get("/api/tiktok/profile", async function (req, res) {
+  const username = validateTikTokUsername(req.query.username);
+  if (!username) {
+    return res.status(400).json({ ok: false, code: "INVALID_USERNAME", error: "Informe um username válido do TikTok." });
+  }
+
+  try {
+    return res.json({ ok: true, profile: await fetchTikTokProfile(username) });
+  } catch (error) {
+    return res.json({
+      ok: false,
+      code: error.code || "TIKTOK_UNAVAILABLE",
+      error: error.message || "Não foi possível consultar o TikTok."
+    });
+  }
+});
+
+
+app.get("/api/rewards", function (req, res) {
+  const search = String(req.query.search || "").trim().toLocaleLowerCase("pt-BR");
+  const matchingRewards = rewards
+    .filter((reward) => !search || reward.username.toLocaleLowerCase("pt-BR").includes(search) || reward.displayName.toLocaleLowerCase("pt-BR").includes(search))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  res.json(matchingRewards);
+});
+
+
+app.post("/api/rewards", async function (req, res) {
+  const username = validateTikTokUsername(req.body && req.body.username);
+  const coins = req.body && req.body.coins;
+
+  if (!username) {
+    return res.status(400).json({ ok: false, error: "Informe um username válido do TikTok." });
+  }
+
+  if (!Number.isSafeInteger(coins) || coins <= 0) {
+    return res.status(400).json({ ok: false, error: "O prêmio deve ser um número inteiro positivo de moedas." });
+  }
+
+  const cached = profileCache.get(username.toLowerCase());
+  let profile = cached && cached.expiresAt > Date.now() ? cached.profile : null;
+
+  if (!profile && req.body.manualVerified !== true) {
+    try {
+      profile = await fetchTikTokProfile(username);
+    } catch (error) {
+      return res.status(error.status || 502).json({ ok: false, code: error.code, error: error.message });
+    }
+  }
+
+  if (!profile && req.body.manualVerified !== true) {
+    return res.status(422).json({ ok: false, error: "Busque e confirme o perfil antes de registrar o prêmio." });
+  }
+
+  const rewardedAt = new Date();
+  const reward = {
+    id: randomUUID(),
+    username: profile ? profile.username : username,
+    displayName: profile ? profile.displayName : username,
+    avatarUrl: profile ? profile.avatarUrl : null,
+    profileVerified: Boolean(profile && profile.profileVerified),
+    verifiedBadge: Boolean(profile && profile.verified),
+    coins,
+    status: "sent",
+    createdAt: rewardedAt.toISOString(),
+    redeemBy: new Date(rewardedAt.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString()
+  };
+
+  saveRewards([reward, ...rewards]);
+  return res.status(201).json({ ok: true, reward });
+});
+
+
+app.patch("/api/rewards/:id/status", function (req, res) {
+  const allowedStatuses = ["sent", "processing", "redeemed", "cancelled"];
+  const status = req.body && req.body.status;
+  const existing = rewards.find((reward) => reward.id === req.params.id);
+
+  if (!existing) {
+    return res.status(404).json({ ok: false, error: "Premiação não encontrada." });
+  }
+
+  if (!allowedStatuses.includes(status)) {
+    return res.status(400).json({ ok: false, error: "Status de premiação inválido." });
+  }
+
+  const reward = { ...existing, status, updatedAt: new Date().toISOString() };
+  saveRewards(rewards.map((item) => item.id === existing.id ? reward : item));
+  return res.json({ ok: true, reward });
 });
 
 
