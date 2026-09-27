@@ -53,6 +53,11 @@
                 </label>
                 <button id="profileSearchButton" class="secondary-button search-profile-button" type="submit">BUSCAR</button>
               </form>
+              <p class="rose-conversion-legend" aria-label="Uma rosa equivale a mil moedas">
+                <span aria-hidden="true">🌹</span>
+                <span>=</span>
+                <strong>1.000 moedas</strong>
+              </p>
               <p id="profileMessage" class="profile-message" role="status" aria-live="polite">Digite um nickname para consultar o perfil público.</p>
 
               <div id="profilePreview" class="prize-profile hidden" aria-live="polite">
@@ -80,6 +85,7 @@
                   <input id="awardCoins" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" placeholder="1.000" required />
                   <span>MOEDAS</span>
                 </span>
+                <span id="roseEquivalent" class="rose-equivalent" aria-live="polite"></span>
               </label>
               <button id="awardButton" class="primary-button award-button" type="submit" disabled>🎁 DAR PRÊMIO</button>
               <p id="awardMessage" class="award-message" role="status" aria-live="polite"></p>

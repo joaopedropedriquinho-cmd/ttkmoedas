@@ -7,11 +7,13 @@ const manualVerification = document.getElementById("manualVerification");
 const awardForm = document.getElementById("awardForm");
 const awardCoins = document.getElementById("awardCoins");
 const awardButton = document.getElementById("awardButton");
+const roseEquivalent = document.getElementById("roseEquivalent");
 const confirmDialog = document.getElementById("confirmRewardDialog");
 const balanceValue = document.getElementById("balanceValue");
 const availableBalance = document.getElementById("availableBalance");
 const awardMessage = document.getElementById("awardMessage");
 const numberFormat = new Intl.NumberFormat("pt-BR");
+const roseNumberFormat = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 3 });
 const dateFormat = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 let selectedProfile = null;
 let profileSearchTimer = null;
@@ -53,6 +55,7 @@ function updateAwardButton() {
   const recipientReady = Boolean(selectedProfile || manualVerification.checked);
   const validAmount = Number.isSafeInteger(amount) && amount > 0;
   const insufficient = currentBalance !== null && validAmount && amount > currentBalance;
+  updateRoseEquivalent(amount, validAmount);
   awardMessage.textContent = insufficient ? "Saldo insuficiente." : "";
   awardMessage.classList.toggle("error", insufficient);
   awardButton.disabled = !recipientReady || !validAmount || currentBalance === null || insufficient || awardSubmitted;
@@ -346,4 +349,17 @@ if (window.io) {
     loadRewards(document.getElementById("rewardSearch").value).catch((error) => setProfileMessage(error.message, true));
   });
   socket.on("balance:update", (state) => setAvailableBalance(state.balance));
+}
+
+function updateRoseEquivalent(amount, validAmount) {
+  if (!validAmount) {
+    roseEquivalent.textContent = "";
+    roseEquivalent.classList.add("hidden");
+    return;
+  }
+
+  const roses = amount / 1000;
+  const label = Number.isInteger(roses) && roses === 1 ? "rosa" : Number.isInteger(roses) ? "rosas" : "rosas equivalentes";
+  roseEquivalent.textContent = `🌹 ${roseNumberFormat.format(roses)} ${label}`;
+  roseEquivalent.classList.remove("hidden");
 }

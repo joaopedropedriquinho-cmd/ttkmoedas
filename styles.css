@@ -961,6 +961,29 @@ ul {
   align-items: end;
 }
 
+.rose-conversion-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 12px auto 0;
+  padding: 7px 14px;
+  border: 1px solid rgba(255, 76, 166, 0.2);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(255, 228, 242, 0.8), rgba(255, 255, 255, 0.92));
+  color: var(--pink-strong);
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.2;
+}
+
+.rose-conversion-legend > span:first-child {
+  font-size: 1rem;
+  filter: drop-shadow(0 3px 5px rgba(248, 28, 140, 0.16));
+}
+
 .profile-search-input,
 .coin-input-wrap {
   display: flex;
@@ -1134,6 +1157,14 @@ ul {
   color: var(--muted);
   font-size: 0.56rem;
   white-space: nowrap;
+}
+
+.rose-equivalent {
+  align-self: center;
+  color: var(--pink-strong);
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-align: center;
 }
 
 .award-button {
@@ -1501,6 +1532,16 @@ ul {
 
   .profile-search-form {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rose-conversion-legend {
+    margin-top: 10px;
+    padding: 7px 12px;
+    font-size: 0.68rem;
+  }
+
+  .rose-equivalent {
+    font-size: 0.68rem;
   }
 
   .search-profile-button {
