@@ -8,6 +8,9 @@ const awardForm = document.getElementById("awardForm");
 const awardCoins = document.getElementById("awardCoins");
 const awardButton = document.getElementById("awardButton");
 const confirmDialog = document.getElementById("confirmRewardDialog");
+const balanceValue = document.getElementById("balanceValue");
+const availableBalance = document.getElementById("availableBalance");
+const awardMessage = document.getElementById("awardMessage");
 const numberFormat = new Intl.NumberFormat("pt-BR");
 const dateFormat = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 let selectedProfile = null;
@@ -17,6 +20,7 @@ let historyRequestId = 0;
 let historyTimer = null;
 let awardSubmitted = false;
 let pendingAward = null;
+let currentBalance = null;
 
 function normalizeUsername(value) {
   return String(value || "").trim().replace(/^@/, "");
@@ -47,7 +51,34 @@ function setAvatar(image, missing, url) {
 function updateAwardButton() {
   const amount = Number(awardCoins.value);
   const recipientReady = Boolean(selectedProfile || manualVerification.checked);
-  awardButton.disabled = !recipientReady || !Number.isSafeInteger(amount) || amount <= 0 || awardSubmitted;
+  const validAmount = Number.isSafeInteger(amount) && amount > 0;
+  const insufficient = currentBalance !== null && validAmount && amount > currentBalance;
+  awardMessage.textContent = insufficient ? "Saldo insuficiente." : "";
+  awardMessage.classList.toggle("error", insufficient);
+  awardButton.disabled = !recipientReady || !validAmount || currentBalance === null || insufficient || awardSubmitted;
+}
+
+function setAvailableBalance(value) {
+  if (!Number.isSafeInteger(value) || value < 0) return;
+
+  const decreased = currentBalance !== null && value < currentBalance;
+  currentBalance = value;
+  balanceValue.textContent = numberFormat.format(value);
+  updateAwardButton();
+
+  if (decreased) {
+    availableBalance.classList.remove("balance-decreased");
+    void availableBalance.offsetWidth;
+    availableBalance.classList.add("balance-decreased");
+    setTimeout(() => availableBalance.classList.remove("balance-decreased"), 650);
+  }
+}
+
+async function loadBalance() {
+  const response = await fetch("/api/balance");
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Não foi possível carregar o saldo.");
+  setAvailableBalance(result.balance);
 }
 
 function clearProfileSelection() {
@@ -193,7 +224,9 @@ document.getElementById("confirmRewardForm").addEventListener("submit", async (e
     document.getElementById("successUsername").textContent = `@${reward.username}`;
     document.getElementById("successCoins").textContent = `🪙 ${numberFormat.format(reward.coins)} moedas`;
     document.getElementById("successSummary").textContent = `Resgate previsto até ${dateFormat.format(new Date(reward.redeemBy))}.`;
+    document.getElementById("successBalance").textContent = `Saldo: ${numberFormat.format(reward.balanceBefore)} -> ${numberFormat.format(reward.balanceAfter)}`;
     setAvatar(document.getElementById("successAvatar"), document.getElementById("successPhotoMissing"), reward.avatarUrl);
+    setAvailableBalance(result.balance);
     awardSubmitted = true;
     updateAwardButton();
     pendingAward = null;
@@ -262,6 +295,12 @@ function createHistoryItem(reward) {
   const redeem = document.createElement("span");
   redeem.textContent = `Resgate previsto até ${dateFormat.format(new Date(reward.redeemBy))}`;
   dates.append(created, redeem);
+  if (Number.isSafeInteger(reward.balanceBefore) && Number.isSafeInteger(reward.balanceAfter)) {
+    const balanceChange = document.createElement("span");
+    balanceChange.className = "history-balance-change";
+    balanceChange.textContent = `Saldo: ${numberFormat.format(reward.balanceBefore)} -> ${numberFormat.format(reward.balanceAfter)}`;
+    dates.appendChild(balanceChange);
+  }
   content.append(topRow, coins, verification, dates);
   item.append(photo, content);
   return item;
@@ -296,10 +335,15 @@ document.getElementById("rewardSearch").addEventListener("input", (event) => {
 });
 
 loadRewards().catch((error) => setProfileMessage(error.message, true));
+loadBalance().catch((error) => {
+  awardMessage.textContent = error.message;
+  awardMessage.classList.add("error");
+});
 
 if (window.io) {
   const socket = window.io();
   socket.on("rewards:update", () => {
     loadRewards(document.getElementById("rewardSearch").value).catch((error) => setProfileMessage(error.message, true));
   });
+  socket.on("balance:update", (state) => setAvailableBalance(state.balance));
 }

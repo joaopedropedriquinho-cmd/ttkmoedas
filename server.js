@@ -19,6 +19,7 @@ const io = new Server(server, {
 
 const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const INITIAL_BALANCE = 1000000000;
 
 const TIKTOK_USERNAME = (
   process.env.TIKTOK_USERNAME ||
@@ -64,7 +65,9 @@ let connectorInstance = null;
 let reconnectTimer = null;
 let tiktokApi = null;
 let players = loadPlayers();
-let rewards = loadRewards();
+const rewardStore = loadRewards();
+let rewards = rewardStore.rewards;
+let balance = rewardStore.balance;
 const profileCache = new Map();
 
 
@@ -162,25 +165,46 @@ function loadRewards() {
   fs.mkdirSync(path.dirname(REWARDS_FILE), { recursive: true });
 
   if (!fs.existsSync(REWARDS_FILE)) {
-    fs.writeFileSync(REWARDS_FILE, "[]\n", "utf8");
+    const initialStore = { balance: INITIAL_BALANCE, rewards: [] };
+    writeRewardStore(initialStore);
+    return initialStore;
   }
 
-  const storedRewards = JSON.parse(fs.readFileSync(REWARDS_FILE, "utf8"));
+  const storedData = JSON.parse(fs.readFileSync(REWARDS_FILE, "utf8"));
+  const storedStore = Array.isArray(storedData)
+    ? { balance: INITIAL_BALANCE, rewards: storedData }
+    : storedData;
 
-  if (!Array.isArray(storedRewards)) {
-    throw new Error("O arquivo de premiações precisa conter uma lista JSON.");
+  if (
+    !storedStore ||
+    !Array.isArray(storedStore.rewards) ||
+    !Number.isSafeInteger(storedStore.balance) ||
+    storedStore.balance < 0
+  ) {
+    throw new Error("O arquivo de premiações ou saldo geral está inválido.");
   }
 
-  return storedRewards;
+  if (Array.isArray(storedData)) {
+    writeRewardStore(storedStore);
+  }
+
+  return storedStore;
 }
 
 
-function saveRewards(nextRewards) {
+function writeRewardStore(store) {
   const temporaryFile = REWARDS_FILE + ".tmp";
-  fs.writeFileSync(temporaryFile, JSON.stringify(nextRewards, null, 2) + "\n", "utf8");
+  fs.writeFileSync(temporaryFile, JSON.stringify(store, null, 2) + "\n", "utf8");
   fs.renameSync(temporaryFile, REWARDS_FILE);
+}
+
+
+function saveRewards(nextRewards, nextBalance = balance) {
+  writeRewardStore({ balance: nextBalance, rewards: nextRewards });
   rewards = nextRewards;
+  balance = nextBalance;
   io.emit("rewards:update");
+  io.emit("balance:update", { balance });
 }
 
 
@@ -1255,6 +1279,11 @@ app.get("/api/rewards", function (req, res) {
 });
 
 
+app.get("/api/balance", function (_req, res) {
+  res.json({ balance });
+});
+
+
 app.post("/api/rewards", async function (req, res) {
   const username = validateTikTokUsername(req.body && req.body.username);
   const coins = req.body && req.body.coins;
@@ -1265,6 +1294,10 @@ app.post("/api/rewards", async function (req, res) {
 
   if (!Number.isSafeInteger(coins) || coins <= 0) {
     return res.status(400).json({ ok: false, error: "O prêmio deve ser um número inteiro positivo de moedas." });
+  }
+
+  if (coins > balance) {
+    return res.status(400).json({ ok: false, error: "Saldo insuficiente." });
   }
 
   const cached = profileCache.get(username.toLowerCase());
@@ -1282,7 +1315,13 @@ app.post("/api/rewards", async function (req, res) {
     return res.status(422).json({ ok: false, error: "Busque e confirme o perfil antes de registrar o prêmio." });
   }
 
+  if (coins > balance) {
+    return res.status(400).json({ ok: false, error: "Saldo insuficiente." });
+  }
+
   const rewardedAt = new Date();
+  const balanceBefore = balance;
+  const balanceAfter = balanceBefore - coins;
   const reward = {
     id: randomUUID(),
     username: profile ? profile.username : username,
@@ -1291,13 +1330,15 @@ app.post("/api/rewards", async function (req, res) {
     profileVerified: Boolean(profile && profile.profileVerified),
     verifiedBadge: Boolean(profile && profile.verified),
     coins,
+    balanceBefore,
+    balanceAfter,
     status: "sent",
     createdAt: rewardedAt.toISOString(),
     redeemBy: new Date(rewardedAt.getTime() + 2 * 24 * 60 * 60 * 1000).toISOString()
   };
 
-  saveRewards([reward, ...rewards]);
-  return res.status(201).json({ ok: true, reward });
+  saveRewards([reward, ...rewards], balanceAfter);
+  return res.status(201).json({ ok: true, reward, balance: balanceAfter });
 });
 
 

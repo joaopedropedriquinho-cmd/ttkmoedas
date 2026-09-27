@@ -861,6 +861,63 @@ ul {
   gap: 18px;
 }
 
+.admin-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.available-balance {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(244, 185, 66, 0.42);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 248, 226, 0.9), rgba(255, 255, 255, 0.92));
+  box-shadow: 0 8px 18px rgba(213, 156, 20, 0.1);
+}
+
+.available-coin {
+  color: var(--gold);
+  font-size: 1.45rem;
+  line-height: 1;
+  filter: drop-shadow(0 4px 7px rgba(213, 156, 20, 0.32));
+}
+
+.available-balance-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.available-balance-copy strong {
+  color: var(--text);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.available-balance-copy > span {
+  color: var(--gold-deep);
+  font-size: 0.52rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.available-balance.balance-decreased {
+  animation: balanceDecrease 0.55s ease;
+}
+
+@keyframes balanceDecrease {
+  0% { transform: translateY(0); }
+  30% { transform: translateY(3px) scale(0.99); }
+  65% { transform: translateY(-1px); }
+  100% { transform: translateY(0); }
+}
+
 .prize-main {
   display: flex;
   flex-direction: column;
@@ -1101,6 +1158,32 @@ ul {
   color: var(--muted);
   font-size: 0.63rem;
   line-height: 1.5;
+}
+
+.award-message {
+  min-height: 1.1em;
+  margin: -8px 0 0;
+  color: #b42318;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.award-message:not(.error) {
+  visibility: hidden;
+}
+
+.history-balance-change {
+  color: var(--gold-deep);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.success-balance {
+  margin: -3px 0 8px;
+  color: var(--gold-deep);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 850;
 }
 
 .prize-success {
@@ -1382,6 +1465,29 @@ ul {
 }
 
 @media (max-width: 460px) {
+  .admin-header-tools {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .available-balance {
+    gap: 7px;
+    padding: 7px 9px;
+  }
+
+  .available-coin {
+    font-size: 1.18rem;
+  }
+
+  .available-balance-copy strong {
+    font-size: 0.84rem;
+  }
+
+  .available-balance-copy > span {
+    font-size: 0.47rem;
+  }
+
   .admin-shell .topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -1426,6 +1532,12 @@ ul {
     width: 70px;
     height: 70px;
     flex-basis: 70px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .available-balance.balance-decreased {
+    animation: none;
   }
 }
 

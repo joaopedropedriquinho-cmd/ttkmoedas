@@ -19,7 +19,16 @@
             </div>
           </div>
         </div>
-        <a class="public-link" href="/admin/players">JOGADORES <span aria-hidden="true">↗</span></a>
+        <div class="admin-header-tools">
+          <div id="availableBalance" class="available-balance" aria-label="Saldo geral de moedas disponíveis">
+            <span class="available-coin" aria-hidden="true">🪙</span>
+            <span class="available-balance-copy">
+              <strong id="balanceValue">Carregando...</strong>
+              <span>MOEDAS DISPONÍVEIS</span>
+            </span>
+          </div>
+          <a class="public-link" href="/admin/players">JOGADORES <span aria-hidden="true">↗</span></a>
+        </div>
       </header>
 
       <main class="prize-main">
@@ -73,6 +82,7 @@
                 </span>
               </label>
               <button id="awardButton" class="primary-button award-button" type="submit" disabled>🎁 DAR PRÊMIO</button>
+              <p id="awardMessage" class="award-message" role="status" aria-live="polite"></p>
               <p class="award-disclaimer">O prêmio será registrado neste painel. A entrega de moedas não é automatizada pelo TikTok.</p>
             </form>
           </div>
@@ -94,6 +104,7 @@
               </div>
             </div>
             <p id="successSummary" class="success-summary"></p>
+            <p id="successBalance" class="success-balance"></p>
             <p class="success-disclaimer">Premiação registrada no sistema; não houve entrega automática de moedas pelo TikTok.</p>
           </section>
         </section>
