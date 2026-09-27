@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Administração manual de jogadores e moedas do LIVE REWARDS." />
+    <title>Painel de Moedas | LIVE REWARDS</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell admin-shell">
+      <header class="topbar">
+        <div class="brand-group">
+          <div class="brand-title">PAINEL DE MOEDAS</div>
+          <div class="status-row">
+            <div class="status-pill manual-pill">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span>ADMINISTRAÇÃO MANUAL</span>
+            </div>
+          </div>
+        </div>
+        <a class="public-link" href="/">VER RANKING <span aria-hidden="true">↗</span></a>
+      </header>
+
+      <main class="admin-main">
+        <section class="admin-section add-section" aria-labelledby="addTitle">
+          <div class="section-heading">
+            <div>
+              <span class="section-kicker">NOVO REGISTRO</span>
+              <h1 id="addTitle">Adicionar jogador</h1>
+            </div>
+          </div>
+          <form id="playerForm" class="player-form">
+            <label class="field">
+              <span>Nome do jogador</span>
+              <input id="playerName" name="name" type="text" maxlength="40" autocomplete="off" placeholder="Ex.: JoaoPedro" required />
+            </label>
+            <label class="field">
+              <span>Quantidade de moedas</span>
+              <input id="playerCoins" name="coins" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" placeholder="1500" required />
+            </label>
+            <button class="primary-button add-player-button" type="submit">+ ADICIONAR JOGADOR</button>
+          </form>
+          <p id="adminMessage" class="admin-message" role="status" aria-live="polite"></p>
+        </section>
+
+        <section class="admin-section players-section" aria-labelledby="playersTitle">
+          <div class="section-heading players-heading">
+            <div>
+              <span class="section-kicker">CONTROLE DE SALDOS</span>
+              <h2 id="playersTitle">Jogadores</h2>
+            </div>
+            <span id="playerCount" class="ranking-count">0 JOGADORES</span>
+          </div>
+          <div id="adminPlayerList" class="admin-player-list" aria-live="polite"></div>
+        </section>
+      </main>
+      <a class="admin-link" href="/">VOLTAR AO RANKING <span aria-hidden="true">↗</span></a>
+    </div>
+
+    <dialog id="playerDialog" class="admin-dialog">
+      <form id="playerDialogForm" class="dialog-form">
+        <span class="section-kicker">DADOS DO JOGADOR</span>
+        <h2>Editar jogador</h2>
+        <input id="editPlayerId" type="hidden" />
+        <label class="field">
+          <span>Nome do jogador</span>
+          <input id="editPlayerName" type="text" maxlength="40" required />
+        </label>
+        <label class="field">
+          <span>Quantidade de moedas</span>
+          <input id="editPlayerCoins" type="number" min="0" max="9007199254740991" step="1" required />
+        </label>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-dialog>CANCELAR</button>
+          <button class="primary-button" type="submit">SALVAR ALTERAÇÕES</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="coinDialog" class="admin-dialog">
+      <form id="coinDialogForm" class="dialog-form">
+        <span class="section-kicker">AJUSTE DE SALDO</span>
+        <h2 id="coinDialogTitle">Adicionar moedas</h2>
+        <p id="coinDialogPlayer" class="dialog-player-name"></p>
+        <input id="coinPlayerId" type="hidden" />
+        <label class="field">
+          <span>Quantidade de moedas</span>
+          <input id="coinAmount" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" placeholder="500" required />
+        </label>
+        <div class="dialog-actions">
+          <button class="secondary-button" type="button" data-close-dialog>CANCELAR</button>
+          <button class="primary-button" type="submit">CONFIRMAR AJUSTE</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="admin.js"></script>
+  </body>
+</html>

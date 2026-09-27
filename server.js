@@ -1,252 +1,728 @@
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const dotenv = require('dotenv');
-const { WebcastPushConnection } = require('tiktok-live-connector');
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const dotenv = require("dotenv");
+const fs = require("fs");
+const path = require("path");
+const { randomUUID } = require("crypto");
 
 dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+
 const io = new Server(server, {
-  cors: { origin: '*' }
+  cors: {
+    origin: "*"
+  }
 });
 
 const PORT = Number(process.env.PORT || 3000);
-const TIKTOK_USERNAME = (process.env.TIKTOK_USERNAME || process.env.TTK_TIKTOK_USERNAME || 'quiz_azul').trim();
-const SIMULATION_MODE = (process.env.SIMULATION_MODE || 'false').toLowerCase() === 'true';
+
+const TIKTOK_USERNAME = (
+  process.env.TIKTOK_USERNAME ||
+  process.env.TTK_TIKTOK_USERNAME ||
+  "quiz_azul"
+).trim();
+
+const SIMULATION_MODE = true;
+const PLAYERS_FILE = process.env.PLAYERS_FILE || path.join(__dirname, "data", "players.json");
+
+const RECONNECT_MS = 15000;
+
+
+// ============================================================
+// ESTADO
+// ============================================================
 
 const state = {
   connected: false,
+
   followers: [],
+
   rewardQueue: [],
+
   rewardHistory: [],
+
   balance: 8000000000,
+
   top10: [],
+
   usersByName: new Map(),
+
   liveUsername: TIKTOK_USERNAME,
+
   rewardInProgress: false,
+
   lastEventAt: Date.now()
 };
 
-let reconnectTimer = null;
-let connectorInstance = null;
-const RECONNECT_MS = 15000;
 
-function formatNumber(value) {
-  return new Intl.NumberFormat('pt-BR').format(value);
-}
+let connectorInstance = null;
+let reconnectTimer = null;
+let tiktokApi = null;
+let players = loadPlayers();
+
+
+// ============================================================
+// UTILIDADES
+// ============================================================
 
 function sanitizeUsername(value) {
-  const cleanName = String(value || '').trim().replace(/^@/, '');
+  const cleanName = String(value || "")
+    .trim()
+    .replace(/^@/, "");
+
   const lowerName = cleanName.toLowerCase();
 
-  if (!cleanName || lowerName === 'usuario' || lowerName === 'user' || lowerName === 'nome' || lowerName === 'seguindo...' || lowerName.includes('seguindo')) {
+  if (
+    !cleanName ||
+    lowerName === "usuario" ||
+    lowerName === "user" ||
+    lowerName === "nome" ||
+    lowerName === "seguindo..." ||
+    lowerName.includes("seguindo")
+  ) {
     return null;
   }
 
   return cleanName;
 }
 
-function toPublicUser(user) {
-  const username = sanitizeUsername(user?.username || user?.name);
+
+function getUserAvatar(user, username) {
+  if (user && user.avatar) {
+    return user.avatar;
+  }
+
+  if (user && user.profilePicture) {
+    return user.profilePicture;
+  }
+
+  if (user && user.avatarThumb) {
+    return user.avatarThumb;
+  }
+
+  return (
+    "https://api.dicebear.com/7.x/initials/svg?seed=" +
+    encodeURIComponent(username)
+  );
+}
+
+
+function getTikTokUsername(user) {
+  if (!user) {
+    return null;
+  }
+
+  return sanitizeUsername(
+    user.uniqueId ||
+    user.username ||
+    user.nickname ||
+    user.name
+  );
+}
+
+
+function getNickname(user, username) {
+  if (!user) {
+    return username;
+  }
+
+  return (
+    user.nickname ||
+    user.displayName ||
+    username
+  );
+}
+
+
+function loadPlayers() {
+  fs.mkdirSync(path.dirname(PLAYERS_FILE), { recursive: true });
+
+  if (!fs.existsSync(PLAYERS_FILE)) {
+    fs.writeFileSync(PLAYERS_FILE, "[]\n", "utf8");
+  }
+
+  const storedPlayers = JSON.parse(fs.readFileSync(PLAYERS_FILE, "utf8"));
+
+  if (!Array.isArray(storedPlayers)) {
+    throw new Error("O arquivo de jogadores precisa conter uma lista JSON.");
+  }
+
+  return storedPlayers;
+}
+
+
+function savePlayers(nextPlayers) {
+  const temporaryFile = PLAYERS_FILE + ".tmp";
+  fs.writeFileSync(temporaryFile, JSON.stringify(nextPlayers, null, 2) + "\n", "utf8");
+  fs.renameSync(temporaryFile, PLAYERS_FILE);
+  players = nextPlayers;
+  emitState();
+}
+
+
+function getSortedPlayers() {
+  return players
+    .slice()
+    .sort((a, b) => b.coins - a.coins || a.name.localeCompare(b.name, "pt-BR"))
+    .map((player, index) => ({ ...player, position: index + 1 }));
+}
+
+
+function validatePlayerInput(body) {
+  const name = String(body && body.name || "").trim();
+  const coins = body && body.coins;
+
+  if (!name || name.length > 40) {
+    return { error: "Informe um nome com até 40 caracteres." };
+  }
+
+  if (!Number.isSafeInteger(coins) || coins < 0) {
+    return { error: "As moedas devem ser um número inteiro não negativo." };
+  }
+
+  return { name, coins };
+}
+
+
+function hasNameConflict(name, exceptId) {
+  return players.some((player) =>
+    player.id !== exceptId && player.name.toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR")
+  );
+}
+
+
+// ============================================================
+// USUÁRIOS
+// ============================================================
+
+function ensureUser(username, extra = {}) {
+  const cleanName = sanitizeUsername(username);
+
+  if (!cleanName) {
+    return null;
+  }
+
+  const key = cleanName.toLowerCase();
+
+  const existing = state.usersByName.get(key);
+
+  if (existing) {
+    Object.assign(existing, extra);
+
+    return existing;
+  }
+
+  const user = {
+    id: extra.id || "user-" + key,
+
+    username: cleanName,
+
+    nickname:
+      sanitizeUsername(extra.nickname) ||
+      cleanName,
+
+    avatar:
+      extra.avatar ||
+      getUserAvatar(extra, cleanName),
+
+    roses: Number(extra.roses || 0),
+
+    position: 0,
+
+    createdAt: Date.now(),
+
+    reachedRoseCountAt: {}
+  };
+
+  state.usersByName.set(key, user);
+
+  state.followers.push(user);
+
+  return user;
+}
+
+
+function getPublicUser(user) {
+  const username = getTikTokUsername(user);
 
   if (!username) {
     return null;
   }
 
   return {
-    username,
-    nickname: sanitizeUsername(user?.nickname || user?.username || user?.name) || username,
-    avatar: user.avatar || user.profilePicture || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}`,
-    roses: user.roses || 0,
-    position: user.position || 0,
-    id: user.id || username
-  };
-}
+    username: username,
 
-function ensureUser(username, extra = {}) {
-  const cleanName = sanitizeUsername(username);
-  if (!cleanName) return null;
+    nickname: getNickname(user, username),
 
-  const existing = state.usersByName.get(cleanName.toLowerCase());
-  if (existing) {
-    return { ...existing, ...extra };
-  }
+    avatar: getUserAvatar(user, username),
 
-  const user = {
-    id: extra.id || `user-${cleanName.toLowerCase()}`,
-    username: cleanName,
-    nickname: sanitizeUsername(extra.nickname || cleanName) || cleanName,
-    avatar: extra.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(cleanName)}`,
+    id:
+      user.userId ||
+      user.id ||
+      username,
+
     roses: 0,
-    position: 0,
-    ...extra
-  };
 
-  state.usersByName.set(cleanName.toLowerCase(), user);
-  state.followers.push(user);
-  return user;
+    position: 0
+  };
 }
+
+
+// ============================================================
+// RANKING
+// ============================================================
 
 function getSortedRanking() {
   const entries = state.followers
-    .filter((user) => user && sanitizeUsername(user.username) && user.roses < 3)
-    .sort((a, b) => b.roses - a.roses || (a.position || 0) - (b.position || 0) || a.username.localeCompare(b.username));
+    .filter(function (user) {
+      return (
+        user &&
+        sanitizeUsername(user.username) &&
+        Number(user.roses || 0) < 3
+      );
+    })
+    .sort(function (a, b) {
+      const roseDifference =
+        Number(b.roses || 0) -
+        Number(a.roses || 0);
 
-  entries.forEach((user, index) => {
+      if (roseDifference !== 0) {
+        return roseDifference;
+      }
+
+      const aTime =
+        Number(
+          a.reachedRoseCountAt &&
+          a.reachedRoseCountAt[a.roses]
+            ? a.reachedRoseCountAt[a.roses]
+            : a.createdAt
+        );
+
+      const bTime =
+        Number(
+          b.reachedRoseCountAt &&
+          b.reachedRoseCountAt[b.roses]
+            ? b.reachedRoseCountAt[b.roses]
+            : b.createdAt
+        );
+
+      return aTime - bTime;
+    });
+
+  entries.forEach(function (user, index) {
     user.position = index + 1;
   });
 
   state.top10 = entries.slice(0, 10);
+
   return state.top10;
 }
 
+
+// ============================================================
+// ENVIAR ESTADO PARA O SITE
+// ============================================================
+
 function emitState() {
-  io.emit('state:update', {
+  io.emit("state:update", {
     connected: state.connected,
+
     balance: state.balance,
+
+    players: getSortedPlayers(),
+
     ranking: getSortedRanking(),
+
     rewardQueue: state.rewardQueue,
+
     rewardHistory: state.rewardHistory,
+
     liveUsername: state.liveUsername,
-    status: state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE'
+
+    status: state.connected
+      ? "● LIVE CONECTADA"
+      : "○ AGUARDANDO LIVE"
   });
 }
+
+
+// ============================================================
+// FILA DE RECOMPENSA
+// ============================================================
 
 function queueReward(user) {
-  const existing = state.rewardQueue.find((item) => item.username === user.username);
-  if (!existing) {
-    state.rewardQueue.push({ ...user, roses: 3, amount: 5000, queuedAt: Date.now() });
+  if (!user) {
+    return;
   }
+
+  const alreadyQueued = state.rewardQueue.some(function (item) {
+    return (
+      item.username.toLowerCase() ===
+      user.username.toLowerCase()
+    );
+  });
+
+  if (alreadyQueued) {
+    return;
+  }
+
+  state.rewardQueue.push({
+    id: user.id,
+
+    username: user.username,
+
+    nickname: user.nickname,
+
+    avatar: user.avatar,
+
+    roses: 3,
+
+    amount: 5000,
+
+    queuedAt: Date.now()
+  });
+
   emitState();
 }
+
+
+function reachThreeRoses(user) {
+  if (!user) {
+    return;
+  }
+
+  user.roses = 3;
+
+  queueReward(user);
+
+  state.followers = state.followers.filter(function (item) {
+    return (
+      item.username.toLowerCase() !==
+      user.username.toLowerCase()
+    );
+  });
+
+  emitState();
+}
+
+
+// ============================================================
+// PREMIAR USUÁRIO
+// ============================================================
 
 function awardUser(username) {
-  const user = state.followers.find((item) => item.username.toLowerCase() === username.toLowerCase());
-  if (!user) return;
+  const key = String(username || "").toLowerCase();
+
+  const queueIndex = state.rewardQueue.findIndex(function (item) {
+    return item.username.toLowerCase() === key;
+  });
+
+  if (queueIndex === -1) {
+    return false;
+  }
+
+  const reward = state.rewardQueue[queueIndex];
 
   state.balance += 5000;
+
   state.rewardHistory.unshift({
-    username: user.username,
-    nickname: user.nickname || user.username,
-    avatar: user.avatar,
+    username: reward.username,
+
+    nickname: reward.nickname,
+
+    avatar: reward.avatar,
+
     roses: 3,
-    amount: 5000
+
+    amount: 5000,
+
+    rewardedAt: Date.now()
   });
 
-  state.followers = state.followers.filter((item) => item.username.toLowerCase() !== username.toLowerCase());
-  state.rewardQueue = state.rewardQueue.filter((item) => item.username.toLowerCase() !== username.toLowerCase());
+  state.rewardQueue.splice(queueIndex, 1);
+
+  state.rewardInProgress = false;
 
   emitState();
+
+  return true;
 }
 
-app.use(express.json());
-app.use(express.static(__dirname));
 
-app.get('/api/status', (_req, res) => {
-  res.json({ connected: state.connected, liveUsername: state.liveUsername, status: state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE' });
-});
+// ============================================================
+// SEGUIDOR
+// ============================================================
 
-app.get('/api/config', (_req, res) => {
-  res.json({ liveUsername: state.liveUsername, simulationMode: SIMULATION_MODE });
-});
+function handleFollow(data) {
+  const sourceUser =
+    data && data.user
+      ? data.user
+      : data;
 
-app.post('/api/connect', (_req, res) => {
-  state.liveUsername = TIKTOK_USERNAME;
-  res.json({ ok: true, liveUsername: state.liveUsername, connected: state.connected });
-});
+  const publicUser = getPublicUser(sourceUser);
 
-app.post('/api/disconnect', (_req, res) => {
-  state.connected = false;
-  emitState();
-  res.json({ ok: true, connected: false });
-});
-
-app.get('/api/event-stream', (_req, res) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  const send = (payload) => res.write(`data: ${JSON.stringify(payload)}\n\n`);
-  send({ type: 'state', payload: { connected: state.connected, balance: state.balance, ranking: getSortedRanking(), rewardQueue: state.rewardQueue, rewardHistory: state.rewardHistory, liveUsername: state.liveUsername } });
-
-  const interval = setInterval(() => send({ type: 'ping' }), 20000);
-  req.on('close', () => clearInterval(interval));
-});
-
-function handleFollow(user) {
-  const normalized = toPublicUser(user);
-  if (!normalized) {
+  if (!publicUser) {
     return;
   }
 
-  const follower = ensureUser(normalized.username, {
-    nickname: normalized.nickname,
-    avatar: normalized.avatar
-  });
+  const follower = ensureUser(
+    publicUser.username,
+    {
+      id: publicUser.id,
 
-  if (follower) {
-    follower.roses = follower.roses || 0;
-  }
+      nickname: publicUser.nickname,
 
-  emitState();
-}
-
-function handleGift(user, gift) {
-  const username = sanitizeUsername((user && (user.username || user.nickname)) || gift?.user?.username || gift?.user?.nickname);
-  if (!username) {
-    return;
-  }
-
-  const profile = toPublicUser({ ...user, username, nickname: user?.nickname || user?.username || username, avatar: user?.avatar || user?.profilePicture || gift?.user?.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(username)}` });
-  if (!profile) {
-    return;
-  }
-
-  const follower = ensureUser(profile.username, {
-    nickname: profile.nickname,
-    avatar: profile.avatar
-  });
+      avatar: publicUser.avatar
+    }
+  );
 
   if (!follower) {
     return;
   }
 
-  const giftName = (gift && gift.giftName) || (gift && gift.name) || 'ROSA';
-  if (giftName && giftName.toLowerCase().includes('rosa')) {
-    follower.roses = (follower.roses || 0) + 1;
+  console.log(
+    "NOVO SEGUIDOR: @" +
+    follower.username
+  );
 
-    if (follower.roses >= 3) {
-      follower.roses = 3;
-      queueReward(follower);
-      state.followers = state.followers.filter((item) => item.username.toLowerCase() !== follower.username.toLowerCase());
-      state.rewardQueue = state.rewardQueue.filter((item) => item.username.toLowerCase() !== follower.username.toLowerCase());
-      if (!state.rewardQueue.some((item) => item.username.toLowerCase() === follower.username.toLowerCase())) {
-        state.rewardQueue.push({ ...follower, roses: 3, amount: 5000, queuedAt: Date.now() });
-      }
-    }
-  }
+  state.lastEventAt = Date.now();
 
   emitState();
 }
 
-function scheduleReconnect() {
-  if (reconnectTimer || state.connected || SIMULATION_MODE || !TIKTOK_USERNAME) {
+
+// ============================================================
+// PRESENTE / ROSA
+// ============================================================
+
+function handleGift(data) {
+  if (!data) {
     return;
   }
 
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    initTikTokLiveConnector();
-  }, RECONNECT_MS);
+  const userData =
+    data.user || {};
+
+  const username =
+    getTikTokUsername(userData);
+
+  if (!username) {
+    return;
+  }
+
+  const giftName =
+    data.giftName ||
+    (data.gift && data.gift.name) ||
+    (data.gift && data.gift.giftName) ||
+    "";
+
+  console.log(
+    "PRESENTE: @" +
+    username +
+    " -> " +
+    (giftName || "presente")
+  );
+
+  const normalizedGiftName =
+    String(giftName).toLowerCase();
+
+  const isRose =
+    normalizedGiftName.includes("rosa") ||
+    normalizedGiftName.includes("rose");
+
+  if (!isRose) {
+    return;
+  }
+
+  let user =
+    state.usersByName.get(
+      username.toLowerCase()
+    );
+
+  if (!user) {
+    user = ensureUser(
+      username,
+      {
+        id:
+          userData.userId ||
+          userData.id ||
+          username,
+
+        nickname:
+          userData.nickname ||
+          username,
+
+        avatar:
+          getUserAvatar(
+            userData,
+            username
+          )
+      }
+    );
+  }
+
+  if (!user) {
+    return;
+  }
+
+  const previousRoses =
+    Number(user.roses || 0);
+
+  if (previousRoses >= 3) {
+    return;
+  }
+
+  user.roses =
+    previousRoses + 1;
+
+  if (!user.reachedRoseCountAt) {
+    user.reachedRoseCountAt = {};
+  }
+
+  user.reachedRoseCountAt[user.roses] =
+    Date.now();
+
+  console.log(
+    "ROSA: @" +
+    username +
+    " agora tem " +
+    user.roses +
+    "/3"
+  );
+
+  if (user.roses >= 3) {
+    reachThreeRoses(user);
+  } else {
+    emitState();
+  }
+
+  state.lastEventAt = Date.now();
 }
 
-function initTikTokLiveConnector() {
-  if (SIMULATION_MODE || !TIKTOK_USERNAME) {
-    state.connected = false;
+
+// ============================================================
+// COMENTÁRIO
+// ============================================================
+
+function handleChat(data) {
+  if (!data) {
+    return;
+  }
+
+  const username =
+    getTikTokUsername(data.user);
+
+  const comment =
+    String(
+      data.comment ||
+      data.message ||
+      ""
+    ).trim();
+
+  if (!username || !comment) {
+    return;
+  }
+
+  console.log(
+    "COMENTÁRIO @" +
+    username +
+    ": " +
+    comment
+  );
+
+  // ==========================================================
+  // TESTE GRATUITO: gatuno11
+  // ==========================================================
+
+  if (
+    comment.toLowerCase() ===
+    "gatuno11"
+  ) {
+    console.log(
+      "TESTE GATUNO11 RECEBIDO DE @" +
+      username
+    );
+
+    const user =
+      ensureUser(
+        username,
+        {
+          id:
+            data.user.userId ||
+            data.user.id ||
+            username,
+
+          nickname:
+            data.user.nickname ||
+            username,
+
+          avatar:
+            getUserAvatar(
+              data.user,
+              username
+            )
+        }
+      );
+
+    if (!user) {
+      return;
+    }
+
+    // O comando gatuno11 NÃO dá rosas.
+    // Apenas adiciona a pessoa ao ranking com 0 rosas.
+
+    user.roses = 0;
+
     emitState();
+
+    return;
+  }
+
+  state.lastEventAt = Date.now();
+}
+
+
+// ============================================================
+// RECONEXÃO
+// ============================================================
+
+function scheduleReconnect() {
+  if (
+    reconnectTimer ||
+    state.connected ||
+    SIMULATION_MODE ||
+    !TIKTOK_USERNAME
+  ) {
+    return;
+  }
+
+  reconnectTimer = setTimeout(
+    function () {
+      reconnectTimer = null;
+
+      initTikTokLiveConnector();
+    },
+    RECONNECT_MS
+  );
+}
+
+
+// ============================================================
+// CONEXÃO COM TIKTOK
+// ============================================================
+
+async function initTikTokLiveConnector() {
+  if (
+    SIMULATION_MODE ||
+    !TIKTOK_USERNAME
+  ) {
+    state.connected = false;
+
+    emitState();
+
     return;
   }
 
@@ -254,110 +730,705 @@ function initTikTokLiveConnector() {
     return;
   }
 
-  const connector = new WebcastPushConnection(TIKTOK_USERNAME, {
-    processInitialData: false,
-    enableExtendedGiftInfo: true
-  });
-  connectorInstance = connector;
+  try {
+    if (!tiktokApi) {
+      tiktokApi =
+        await import(
+          "tiktok-live-connector"
+        );
+    }
 
-  connector.on('connected', () => {
-    state.connected = true;
-    state.liveUsername = TIKTOK_USERNAME;
-    console.log(`LIVE CONECTADA: @${TIKTOK_USERNAME}`);
-    emitState();
-  });
+    const TikTokLiveConnection =
+      tiktokApi.TikTokLiveConnection;
 
-  connector.on('disconnected', () => {
+    const WebcastEvent =
+      tiktokApi.WebcastEvent;
+
+    if (!TikTokLiveConnection) {
+      throw new Error(
+        "TikTokLiveConnection não encontrado na biblioteca instalada."
+      );
+    }
+
+    console.log(
+      "Tentando conectar na LIVE @" +
+      TIKTOK_USERNAME +
+      "..."
+    );
+
+    const connector =
+      new TikTokLiveConnection(
+        TIKTOK_USERNAME,
+        {
+          processInitialData: false
+        }
+      );
+
+    connectorInstance =
+      connector;
+
+
+    // ========================================================
+    // CONECTADO
+    // ========================================================
+
+    connector.on(
+      WebcastEvent.CONNECTED,
+      function (data) {
+        state.connected = true;
+
+        state.liveUsername =
+          TIKTOK_USERNAME;
+
+        state.lastEventAt =
+          Date.now();
+
+        console.log(
+          "======================================"
+        );
+
+        console.log(
+          "LIVE CONECTADA: @" +
+          TIKTOK_USERNAME
+        );
+
+        console.log(
+          "ROOM ID: " +
+          (
+            data && data.roomId
+              ? data.roomId
+              : "desconhecido"
+          )
+        );
+
+        console.log(
+          "======================================"
+        );
+
+        emitState();
+      }
+    );
+
+
+    // ========================================================
+    // DESCONECTADO
+    // ========================================================
+
+    connector.on(
+      WebcastEvent.DISCONNECTED,
+      function () {
+        state.connected = false;
+
+        connectorInstance = null;
+
+        console.log(
+          "LIVE DESCONECTADA: @" +
+          TIKTOK_USERNAME
+        );
+
+        emitState();
+
+        scheduleReconnect();
+      }
+    );
+
+
+    // ========================================================
+    // COMENTÁRIOS
+    // ========================================================
+
+    connector.on(
+      WebcastEvent.CHAT,
+      function (data) {
+        handleChat(data);
+      }
+    );
+
+
+    // ========================================================
+    // SEGUIDORES
+    // ========================================================
+
+    connector.on(
+      WebcastEvent.FOLLOW,
+      function (data) {
+        handleFollow(data);
+      }
+    );
+
+
+    // ========================================================
+    // PRESENTES
+    // ========================================================
+
+    connector.on(
+      WebcastEvent.GIFT,
+      function (data) {
+        handleGift(data);
+      }
+    );
+
+
+    // ========================================================
+    // MEMBROS
+    // ========================================================
+
+    if (WebcastEvent.MEMBER) {
+      connector.on(
+        WebcastEvent.MEMBER,
+        function (data) {
+          const sourceUser =
+            data && data.user
+              ? data.user
+              : data;
+
+          const username =
+            getTikTokUsername(sourceUser);
+
+          if (username) {
+            console.log(
+              "ENTROU NA LIVE: @" +
+              username
+            );
+          }
+        }
+      );
+    }
+
+
+    // ========================================================
+    // FIM DA LIVE
+    // ========================================================
+
+    if (WebcastEvent.STREAM_END) {
+      connector.on(
+        WebcastEvent.STREAM_END,
+        function () {
+          state.connected = false;
+
+          connectorInstance = null;
+
+          console.log(
+            "LIVE FINALIZADA: @" +
+            TIKTOK_USERNAME
+          );
+
+          emitState();
+
+          scheduleReconnect();
+        }
+      );
+    }
+
+
+    // ========================================================
+    // ERRO
+    // ========================================================
+
+    if (WebcastEvent.ERROR) {
+      connector.on(
+        WebcastEvent.ERROR,
+        function (error) {
+          console.warn(
+            "ERRO TikTok @" +
+            TIKTOK_USERNAME +
+            ":",
+            error && error.message
+              ? error.message
+              : error
+          );
+
+          state.connected = false;
+
+          connectorInstance = null;
+
+          emitState();
+
+          scheduleReconnect();
+        }
+      );
+    }
+
+
+    // ========================================================
+    // CONECTAR
+    // ========================================================
+
+    await connector.connect();
+
+  } catch (error) {
+    console.warn(
+      "Falha ao conectar @" +
+      TIKTOK_USERNAME +
+      ":",
+      error && error.message
+        ? error.message
+        : error
+    );
+
     state.connected = false;
+
     connectorInstance = null;
-    console.log(`LIVE DESCONECTADA: @${TIKTOK_USERNAME}`);
+
     emitState();
+
     scheduleReconnect();
-  });
-
-  connector.on('member', (data) => {
-    handleFollow(data);
-  });
-
-  connector.on('follow', (data) => {
-    handleFollow(data);
-  });
-
-  connector.on('gift', (data) => {
-    const user = data && data.user ? data.user : {};
-    const gift = data && data.gift ? data.gift : data;
-    handleGift(user, gift);
-  });
-
-  connector.on('live', () => {
-    state.connected = true;
-    state.liveUsername = TIKTOK_USERNAME;
-    emitState();
-  });
-
-  connector.on('error', (err) => {
-    console.warn(`TikTok Live offline/erro em @${TIKTOK_USERNAME}:`, err?.message || err);
-    state.connected = false;
-    connectorInstance = null;
-    emitState();
-    scheduleReconnect();
-  });
-
-  connector.connect().catch((error) => {
-    console.warn(`TikTok connect failed for @${TIKTOK_USERNAME}; aguardando nova tentativa:`, error?.message || error);
-    state.connected = false;
-    connectorInstance = null;
-    emitState();
-    scheduleReconnect();
-  });
+  }
 }
+
+
+// ============================================================
+// SIMULAÇÃO
+// ============================================================
 
 function runSimulationTest() {
   if (!SIMULATION_MODE) {
     return;
   }
 
-  const names = ['test_user_01', 'test_user_02', 'test_user_03'];
-  const name = names[Math.floor(Math.random() * names.length)];
-  const user = ensureUser(name, {
-    nickname: name,
-    avatar: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`
-  });
+  const username =
+    "test_user_" +
+    Date.now();
 
-  if (user) {
-    user.roses = Math.min(3, (user.roses || 0) + 1);
-    if (user.roses >= 3) {
-      user.roses = 3;
-      queueReward(user);
+  const user =
+    ensureUser(
+      username,
+      {
+        nickname: username,
+
+        avatar:
+          "https://api.dicebear.com/7.x/initials/svg?seed=" +
+          encodeURIComponent(username)
+      }
+    );
+
+  if (!user) {
+    return;
+  }
+
+  user.roses =
+    Math.min(
+      3,
+      Number(user.roses || 0) + 1
+    );
+
+  if (user.roses >= 3) {
+    reachThreeRoses(user);
+  } else {
+    emitState();
+  }
+}
+
+
+// ============================================================
+// EXPRESS
+// ============================================================
+
+app.use(express.json());
+
+app.use(
+  express.static(__dirname)
+);
+
+
+app.get("/admin", function (_req, res) {
+  res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+
+app.get("/api/players", function (_req, res) {
+  res.json(getSortedPlayers());
+});
+
+
+app.post("/api/players", function (req, res) {
+  const input = validatePlayerInput(req.body);
+
+  if (input.error) {
+    return res.status(400).json({ ok: false, error: input.error });
+  }
+
+  if (hasNameConflict(input.name)) {
+    return res.status(409).json({ ok: false, error: "Já existe um jogador com esse nome." });
+  }
+
+  const player = {
+    id: randomUUID(),
+    name: input.name,
+    coins: input.coins,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  savePlayers(players.concat(player));
+  return res.status(201).json({ ok: true, player, players: getSortedPlayers() });
+});
+
+
+app.put("/api/players/:id", function (req, res) {
+  const existing = players.find((player) => player.id === req.params.id);
+
+  if (!existing) {
+    return res.status(404).json({ ok: false, error: "Jogador não encontrado." });
+  }
+
+  const input = validatePlayerInput(req.body);
+
+  if (input.error) {
+    return res.status(400).json({ ok: false, error: input.error });
+  }
+
+  if (hasNameConflict(input.name, existing.id)) {
+    return res.status(409).json({ ok: false, error: "Já existe um jogador com esse nome." });
+  }
+
+  const player = {
+    ...existing,
+    name: input.name,
+    coins: input.coins,
+    updatedAt: new Date().toISOString()
+  };
+
+  savePlayers(players.map((item) => item.id === existing.id ? player : item));
+  return res.json({ ok: true, player, players: getSortedPlayers() });
+});
+
+
+app.post("/api/players/:id/coins", function (req, res) {
+  const existing = players.find((player) => player.id === req.params.id);
+
+  if (!existing) {
+    return res.status(404).json({ ok: false, error: "Jogador não encontrado." });
+  }
+
+  const amount = req.body && req.body.amount;
+  const operation = req.body && req.body.operation;
+
+  if (!Number.isSafeInteger(amount) || amount <= 0 || !["add", "remove"].includes(operation)) {
+    return res.status(400).json({ ok: false, error: "Informe uma quantidade inteira positiva e uma operação válida." });
+  }
+
+  const coins = operation === "add" ? existing.coins + amount : existing.coins - amount;
+
+  if (!Number.isSafeInteger(coins) || coins < 0) {
+    return res.status(400).json({ ok: false, error: "A operação deixaria o saldo inválido." });
+  }
+
+  const player = { ...existing, coins, updatedAt: new Date().toISOString() };
+  savePlayers(players.map((item) => item.id === existing.id ? player : item));
+  return res.json({ ok: true, player, players: getSortedPlayers() });
+});
+
+
+app.delete("/api/players/:id", function (req, res) {
+  const existing = players.find((player) => player.id === req.params.id);
+
+  if (!existing) {
+    return res.status(404).json({ ok: false, error: "Jogador não encontrado." });
+  }
+
+  savePlayers(players.filter((player) => player.id !== existing.id));
+  return res.json({ ok: true });
+});
+
+
+// ============================================================
+// STATUS
+// ============================================================
+
+app.get(
+  "/api/status",
+  function (_req, res) {
+    res.json({
+      connected:
+        state.connected,
+
+      liveUsername:
+        state.liveUsername,
+
+      status:
+        state.connected
+          ? "● LIVE CONECTADA"
+          : "○ AGUARDANDO LIVE"
+    });
+  }
+);
+
+
+// ============================================================
+// CONFIG
+// ============================================================
+
+app.get(
+  "/api/config",
+  function (_req, res) {
+    res.json({
+      liveUsername:
+        state.liveUsername,
+
+      simulationMode:
+        SIMULATION_MODE
+    });
+  }
+);
+
+
+// ============================================================
+// CONECTAR MANUALMENTE
+// ============================================================
+
+app.post(
+  "/api/connect",
+  function (_req, res) {
+    res.status(410).json({
+      ok: false,
+      error: "A integração automática está desativada nesta versão manual."
+    });
+  }
+);
+
+
+// ============================================================
+// DESCONECTAR
+// ============================================================
+
+app.post(
+  "/api/disconnect",
+  async function (_req, res) {
+    try {
+      if (connectorInstance) {
+        if (
+          typeof connectorInstance.disconnect ===
+          "function"
+        ) {
+          await connectorInstance.disconnect();
+        }
+      }
+    } catch (error) {
+      console.warn(
+        "Erro ao desconectar:",
+        error && error.message
+          ? error.message
+          : error
+      );
+    }
+
+    connectorInstance = null;
+
+    state.connected = false;
+
+    emitState();
+
+    res.json({
+      ok: true,
+
+      connected: false
+    });
+  }
+);
+
+
+// ============================================================
+// PREMIAR
+// ============================================================
+
+app.post(
+  "/api/reward",
+  function (req, res) {
+    const username =
+      sanitizeUsername(
+        req.body &&
+        req.body.username
+      );
+
+    if (!username) {
+      return res.status(400).json({
+        ok: false,
+
+        error:
+          "Usuário inválido"
+      });
+    }
+
+    const rewarded =
+      awardUser(username);
+
+    if (!rewarded) {
+      return res.status(404).json({
+        ok: false,
+
+        error:
+          "Usuário não está na fila de recompensa"
+      });
+    }
+
+    return res.json({
+      ok: true,
+
+      username: username,
+
+      amount: 5000,
+
+      balance:
+        state.balance
+    });
+  }
+);
+
+
+// ============================================================
+// EVENT STREAM
+// ============================================================
+
+app.get(
+  "/api/event-stream",
+  function (_req, res) {
+    res.setHeader(
+      "Content-Type",
+      "text/event-stream"
+    );
+
+    res.setHeader(
+      "Cache-Control",
+      "no-cache, no-transform"
+    );
+
+    res.setHeader(
+      "Connection",
+      "keep-alive"
+    );
+
+    if (res.flushHeaders) {
+      res.flushHeaders();
+    }
+
+    function send(payload) {
+      res.write(
+        "data: " +
+        JSON.stringify(payload) +
+        "\n\n"
+      );
+    }
+
+    send({
+      type: "state",
+
+      payload: {
+        connected:
+          state.connected,
+
+        balance:
+          state.balance,
+
+        ranking:
+          getSortedRanking(),
+
+        rewardQueue:
+          state.rewardQueue,
+
+        rewardHistory:
+          state.rewardHistory,
+
+        liveUsername:
+          state.liveUsername
+      }
+    });
+
+    const interval =
+      setInterval(
+        function () {
+          send({
+            type: "ping"
+          });
+        },
+        20000
+      );
+
+    _req.on(
+      "close",
+      function () {
+        clearInterval(interval);
+      }
+    );
+  }
+);
+
+
+// ============================================================
+// SOCKET.IO
+// ============================================================
+
+io.on(
+  "connection",
+  function (socket) {
+    socket.emit(
+      "state:update",
+      {
+        connected:
+          state.connected,
+
+        balance:
+          state.balance,
+
+        players:
+          getSortedPlayers(),
+
+        ranking:
+          getSortedRanking(),
+
+        rewardQueue:
+          state.rewardQueue,
+
+        rewardHistory:
+          state.rewardHistory,
+
+        liveUsername:
+          state.liveUsername,
+
+        status:
+          state.connected
+            ? "● LIVE CONECTADA"
+            : "○ AGUARDANDO LIVE"
+      }
+    );
+  }
+);
+
+
+// ============================================================
+// TESTE GLOBAL
+// ============================================================
+
+globalThis.runSimulationTest =
+  runSimulationTest;
+
+
+// ============================================================
+// SERVIDOR
+// ============================================================
+
+server.listen(
+  PORT,
+  function () {
+    console.log(
+      "Servidor rodando em http://localhost:" +
+      PORT
+    );
+
+    console.log(
+      "TIKTOK_USERNAME=" +
+      TIKTOK_USERNAME
+    );
+
+    console.log(
+      "SIMULATION_MODE=" +
+      SIMULATION_MODE
+    );
+
+    emitState();
+
+    if (!SIMULATION_MODE) {
+      initTikTokLiveConnector();
     }
   }
-
-  emitState();
-}
-
-if (!SIMULATION_MODE) {
-  initTikTokLiveConnector();
-}
-
-globalThis.runSimulationTest = runSimulationTest;
-
-io.on('connection', (socket) => {
-  socket.emit('state:update', {
-    connected: state.connected,
-    balance: state.balance,
-    ranking: getSortedRanking(),
-    rewardQueue: state.rewardQueue,
-    rewardHistory: state.rewardHistory,
-    liveUsername: state.liveUsername,
-    status: state.connected ? '● LIVE CONECTADA' : '○ AGUARDANDO LIVE'
-  });
-});
-
-server.listen(PORT, () => {
-  console.log(`Servidor rodando em http://localhost:${PORT}`);
-  console.log(`TIKTOK_USERNAME=${TIKTOK_USERNAME}`);
-  if (!SIMULATION_MODE) {
-    initTikTokLiveConnector();
-  }
-  emitState();
-});
+);

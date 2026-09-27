@@ -1,70 +1,20 @@
 # TTK Moedas
 
-Sistema de ranking e recompensas para TikTok LIVE.
+Ranking manual de jogadores e moedas, com atualização em tempo real.
 
-## Visão geral
-
-Este projeto simula uma interface de live com:
-
-- ranking de seguidores em tempo real;
-- contagem de rosas;
-- fila de premiação;
-- saldo em moedas;
-- integração com TikTok LIVE via `tiktok-live-connector`;
-- modo local de simulação para testes.
-
-## Instalação
+## Iniciar
 
 ```bash
 npm install
-```
-
-## Iniciar o projeto
-
-```bash
 npm start
 ```
 
-## Configuração
+Abra `http://localhost:3000` para o ranking e `http://localhost:3000/admin` para o painel administrativo. A porta pode ser alterada pela variável `PORT`.
 
-Crie um arquivo `.env` com base no `.env.example`:
+## Dados e atualização
 
-```env
-TIKTOK_USERNAME=quiz_azul
-PORT=3000
-SIMULATION_MODE=false
-```
+Os jogadores são armazenados em `data/players.json`, no servidor. Esse arquivo é criado automaticamente e fica fora do Git. Para usar outro caminho, defina `PLAYERS_FILE`.
 
-- `TIKTOK_USERNAME`: username da live do TikTok, configurado permanentemente como `quiz_azul`.
-- `PORT`: porta do servidor.
-- `SIMULATION_MODE=false`: tenta conectar com o TikTok LIVE real automaticamente.
-- `SIMULATION_MODE=true`: usa a simulação local.
+As rotas `GET`, `POST`, `PUT` e `DELETE /api/players` gerenciam o cadastro. O ajuste de saldo usa `POST /api/players/:id/coins` com `operation` igual a `add` ou `remove` e `amount` inteiro positivo. Alterações são persistidas antes de serem transmitidas aos clientes conectados por Socket.IO.
 
-## Modo simulação
-
-O projeto pode rodar sem autenticação ou cookies usando dados simulados para testar o ranking e a premiação.
-
-## Modo TikTok LIVE
-
-Quando `SIMULATION_MODE=false`, o projeto tentará conectar com a live configurada em `TTK_TIKTOK_USERNAME` usando `tiktok-live-connector`.
-
-## Importante
-
-- Não envie senhas, cookies, tokens ou chaves privadas para o GitHub.
-- Use `.gitignore` para evitar arquivos sensíveis.
-
-## Arquitetura simplificada
-
-```text
-TikTok Connector
-  ↓
-Event Manager
-  ↓
-Ranking Manager
-  ↓
-Reward Queue
-  ↓
-Socket.IO
-  ↓
-Frontend
-```
+As integrações e a entrada automática de pontos do TikTok estão desativadas nesta versão manual. O painel não tem autenticação e deve ser usado apenas em ambiente local ou em uma rede confiável; a rota de administração pode receber autenticação posteriormente.
